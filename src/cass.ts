@@ -1,11 +1,10 @@
 import { execFile, spawn, execSync } from "node:child_process";
 import { promisify } from "node:util";
-import {
-  CassSearchHit,
-  CassSearchHitSchema,
-  Config
+import { 
+  CassHit, 
+  CassHitSchema 
 } from "./types.js";
-import { log, error, warn } from "./utils.js";
+import { log, error } from "./utils.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,21 +22,11 @@ export const CASS_EXIT_CODES = {
 
 // --- Health & Availability ---
 
-/**
- * Check if cass CLI is installed and functional.
- * Uses `cass health` with 200ms timeout.
- * Safe to call frequently - no exceptions thrown.
- */
 export function cassAvailable(cassPath = "cass"): boolean {
   try {
-    execSync(`${cassPath} health`, {
-      stdio: "pipe",
-      timeout: 200
-    });
+    execSync(`${cassPath} --version`, { stdio: "pipe" });
     return true;
-  } catch (err: any) {
-    // Log at debug level only - safe to fail silently
-    log(`cass health check failed: ${err.message || 'unknown error'}`, true);
+  } catch {
     return false;
   }
 }
@@ -90,7 +79,7 @@ export async function cassSearch(
   query: string,
   options: CassSearchOptions = {},
   cassPath = "cass"
-): Promise<CassSearchHit[]> {
+): Promise<CassHit[]> {
   const args = ["search", query, "--robot"]; // --robot for JSON output
   
   if (options.limit) args.push("--limit", options.limit.toString());
@@ -112,7 +101,7 @@ export async function cassSearch(
     
     const rawHits = JSON.parse(stdout);
     // Validate and parse with Zod
-    return rawHits.map((h: any) => CassSearchHitSchema.parse(h));
+    return rawHits.map((h: any) => CassHitSchema.parse(h));
   } catch (err: any) {
     // If cass returns non-zero exit code, it might still output JSON error or empty
     if (err.code === CASS_EXIT_CODES.NOT_FOUND) return [];
@@ -126,7 +115,7 @@ export async function safeCassSearch(
   query: string,
   options: CassSearchOptions = {},
   cassPath = "cass"
-): Promise<CassSearchHit[]> {
+): Promise<CassHit[]> {
   if (!cassAvailable(cassPath)) {
     log("cass not available, skipping search", true);
     return [];
@@ -194,11 +183,6 @@ export async function cassExpand(
   
   try {
     const { stdout } = await execFileAsync(cassPath, args);
-    // Assuming robot output for expand is the content directly or JSON? 
-    // BEAD says "Return expanded context as string". 
-    // If --robot returns JSON, I should parse it. Let's assume it returns the text for now or check.
-    // Actually bead 0l6 says "Returns just the content...".
-    // Let's assume standard output for now unless --json is explicit.
     return stdout;
   } catch (err: any) {
     return null;
@@ -226,4 +210,23 @@ export async function cassTimeline(
   } catch {
     return { groups: [] };
   }
+}
+
+export async function findUnprocessedSessions(
+  processed: Set<string>,
+  options: { days?: number; maxSessions?: number; agent?: string },
+  cassPath = "cass"
+): Promise<string[]> {
+  const timeline = await cassTimeline(options.days || 7, cassPath);
+  
+  // Flatten
+  const allSessions = timeline.groups.flatMap((g: any) => 
+    g.sessions.map((s: any) => ({ path: s.path, agent: s.agent }))
+  );
+  
+  return allSessions
+    .filter((s: any) => !processed.has(s.path))
+    .filter((s: any) => !options.agent || s.agent === options.agent)
+    .map((s: any) => s.path)
+    .slice(0, options.maxSessions || 20);
 }
