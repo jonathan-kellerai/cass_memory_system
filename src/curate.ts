@@ -76,9 +76,11 @@ function invertToAntiPattern(bullet: PlaybookBullet): PlaybookBullet {
     sourceSessions: bullet.sourceSessions,
     sourceAgents: bullet.sourceAgents,
     tags: [...bullet.tags, "inverted", "anti-pattern"],
-    feedbackEvents: [],
+    helpfulEvents: [],
+    harmfulEvents: [],
     helpfulCount: 0,
     harmfulCount: 0,
+    confidenceDecayHalfLifeDays: bullet.confidenceDecayHalfLifeDays,
     deprecated: false,
     pinned: false
   };
@@ -125,7 +127,8 @@ export function curatePlaybook(
         const similar = findSimilarBullet(content, playbook, config.dedupSimilarityThreshold);
         if (similar) {
           // Boost existing instead of adding
-          similar.feedbackEvents.push({
+          similar.helpfulEvents = similar.helpfulEvents ?? [];
+          similar.helpfulEvents.push({
             type: "helpful",
             timestamp: now(),
             sessionPath: delta.sourceSession,
@@ -138,14 +141,18 @@ export function curatePlaybook(
         }
         
         // 3. Add new
-        const newBullet = addBullet(playbook, {
-          content,
-          category,
-          tags,
-          type: "rule",
-          kind: "stack_pattern",
-          scope: "global"
-        }, delta.sourceSession);
+        const newBullet = addBullet(
+          playbook,
+          {
+            content,
+            category: delta.bullet.category,
+            tags: delta.bullet.tags || [],
+            type: "rule",
+            kind: "stack_pattern",
+            scope: "global"
+          },
+          delta.sourceSession
+        );
         
         existingHashes.add(hash);
         applied = true;
@@ -155,11 +162,12 @@ export function curatePlaybook(
       case "helpful": {
         const bullet = findBullet(playbook, delta.bulletId);
         if (bullet) {
-          bullet.feedbackEvents.push({
+          bullet.helpfulEvents = bullet.helpfulEvents ?? [];
+          bullet.helpfulEvents.push({
             type: "helpful",
             timestamp: now(),
             sessionPath: delta.sourceSession,
-            context: delta.context
+            context: (delta as any).context
           });
           bullet.helpfulCount++;
           bullet.lastValidatedAt = now();
@@ -172,12 +180,13 @@ export function curatePlaybook(
       case "harmful": {
         const bullet = findBullet(playbook, delta.bulletId);
         if (bullet) {
-          bullet.feedbackEvents.push({
+          bullet.harmfulEvents = bullet.harmfulEvents ?? [];
+          bullet.harmfulEvents.push({
             type: "harmful",
             timestamp: now(),
             sessionPath: delta.sourceSession,
             reason: delta.reason,
-            context: delta.context
+            context: (delta as any).context
           });
           bullet.harmfulCount++;
           bullet.updatedAt = now();
