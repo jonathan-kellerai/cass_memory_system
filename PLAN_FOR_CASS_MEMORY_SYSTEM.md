@@ -862,6 +862,154 @@ async function computeStats(playbook: Playbook): Promise<PlaybookStats> {
 }
 ```
 
+### Command: `doctor` (System Health Check)
+
+**Purpose**: Single command to verify entire cass-memory setup is healthy. Essential for adoption and debugging.
+
+```bash
+cass-memory doctor
+cass-memory doctor --json
+cass-memory doctor --fix  # Auto-fix recoverable issues
+```
+
+**Output Example**:
+```
+╭─────────────────────────────────────────────────────────╮
+│              CASS-MEMORY HEALTH CHECK                   │
+├─────────────────────────────────────────────────────────┤
+│ CASS INTEGRATION                                        │
+│   ✓ cass found: /usr/local/bin/cass (v0.8.2)           │
+│   ✓ Index healthy (last updated: 2h ago)                │
+│   ✓ 1,247 sessions indexed across 4 agents             │
+│                                                         │
+│ STORAGE                                                 │
+│   ✓ Data directory: ~/.cass-memory (42MB)              │
+│   ✓ Disk space available: 89GB                         │
+│   ✓ Playbook: 156 bullets (89 global, 67 workspace)    │
+│   ✓ Diary entries: 342                                  │
+│                                                         │
+│ LLM PROVIDERS                                           │
+│   ✓ ANTHROPIC_API_KEY present                          │
+│   ✗ OPENAI_API_KEY missing (optional)                  │
+│   ✗ GOOGLE_API_KEY missing (optional)                  │
+│                                                         │
+│ CONFIGURATION                                           │
+│   ✓ Config valid: ~/.cass-memory/config.json           │
+│   ✓ Provider: anthropic / claude-sonnet-4-20250514     │
+│                                                         │
+│ SELF-TEST                                               │
+│   ✓ Playbook load: 12ms                                │
+│   ✓ Cass search: 45ms                                  │
+│   ⚠ Sanitization test: 1 pattern may be too broad      │
+│                                                         │
+│ ISSUES FOUND: 1 warning                                 │
+│   ⚠ SANITIZATION_PATTERN_BROAD                         │
+│     Pattern /token.*/gi may redact too aggressively    │
+│     Recommend: Use more specific pattern                │
+╰─────────────────────────────────────────────────────────╯
+```
+
+**Implementation**:
+```typescript
+interface HealthCheckResult {
+  overall: "healthy" | "degraded" | "unhealthy";
+  checks: HealthCheck[];
+  warnings: string[];
+  errors: string[];
+  fixable: FixableIssue[];
+}
+
+interface HealthCheck {
+  category: "cass" | "storage" | "llm" | "config" | "self_test";
+  name: string;
+  status: "pass" | "warn" | "fail";
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+async function runDoctor(options: { fix?: boolean; json?: boolean }): Promise<HealthCheckResult> {
+  const checks: HealthCheck[] = [];
+  const fixable: FixableIssue[] = [];
+
+  // === CASS INTEGRATION ===
+  const cassPath = await findCass();
+  if (cassPath) {
+    checks.push({ category: "cass", name: "cass_found", status: "pass", message: `cass found: ${cassPath}` });
+
+    const cassVersion = await getCassVersion(cassPath);
+    checks.push({ category: "cass", name: "cass_version", status: "pass", message: `Version: ${cassVersion}` });
+
+    const indexHealth = await checkCassIndex(cassPath);
+    if (indexHealth.healthy) {
+      checks.push({ category: "cass", name: "index_healthy", status: "pass", message: `Index healthy (${indexHealth.sessionCount} sessions)` });
+    } else {
+      checks.push({ category: "cass", name: "index_healthy", status: "fail", message: "Index missing or stale" });
+      fixable.push({ id: "rebuild_index", fix: () => execSync(`${cassPath} index --full`) });
+    }
+  } else {
+    checks.push({ category: "cass", name: "cass_found", status: "fail", message: "cass not found in PATH" });
+  }
+
+  // === STORAGE ===
+  const dataDir = expandPath("~/.cass-memory");
+  if (await exists(dataDir)) {
+    const size = await getDirSize(dataDir);
+    checks.push({ category: "storage", name: "data_dir", status: "pass", message: `Data directory: ${dataDir} (${formatBytes(size)})` });
+
+    const playbook = await loadPlaybook();
+    checks.push({ category: "storage", name: "playbook", status: "pass", message: `Playbook: ${playbook.bullets.length} bullets` });
+  } else {
+    checks.push({ category: "storage", name: "data_dir", status: "warn", message: "Data directory not initialized" });
+    fixable.push({ id: "init_data_dir", fix: () => initDataDir() });
+  }
+
+  // === LLM PROVIDERS ===
+  const providers = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"];
+  for (const key of providers) {
+    const present = !!process.env[key];
+    const required = key === "ANTHROPIC_API_KEY";  // Or check config
+    checks.push({
+      category: "llm",
+      name: key.toLowerCase(),
+      status: present ? "pass" : (required ? "fail" : "warn"),
+      message: present ? `${key} present` : `${key} missing${required ? "" : " (optional)"}`
+    });
+  }
+
+  // === SELF-TEST ===
+  const startTime = Date.now();
+  try {
+    await loadPlaybook();
+    checks.push({ category: "self_test", name: "playbook_load", status: "pass", message: `Playbook load: ${Date.now() - startTime}ms` });
+  } catch (e) {
+    checks.push({ category: "self_test", name: "playbook_load", status: "fail", message: `Playbook load failed: ${e}` });
+  }
+
+  // === AUTO-FIX ===
+  if (options.fix) {
+    for (const issue of fixable) {
+      try {
+        await issue.fix();
+        console.log(`Fixed: ${issue.id}`);
+      } catch (e) {
+        console.error(`Failed to fix ${issue.id}: ${e}`);
+      }
+    }
+  }
+
+  const errors = checks.filter(c => c.status === "fail").map(c => c.message);
+  const warnings = checks.filter(c => c.status === "warn").map(c => c.message);
+
+  return {
+    overall: errors.length > 0 ? "unhealthy" : warnings.length > 0 ? "degraded" : "healthy",
+    checks,
+    warnings,
+    errors,
+    fixable
+  };
+}
+```
+
 ### Command: `top` / `stale` / `why` / `similar` (NEW: Quick Insights)
 
 ```bash
@@ -968,13 +1116,130 @@ async function reflectOnSession(
 
 This is the key innovation from GPT Pro: don't blindly accept LLM-proposed rules.
 
+**NEW: Evidence-Count Gate (Pre-LLM Filter)**
+
+Before invoking the LLM, apply a cheap heuristic filter based on evidence counts. This saves LLM calls and improves quality.
+
+```typescript
+interface EvidenceGateResult {
+  passed: boolean;
+  reason: string;
+  suggestedState: "draft" | "active";
+  sessionCount: number;
+  successCount: number;
+  failureCount: number;
+}
+
+/**
+ * Pre-LLM filter: check if there's enough evidence to even consider this rule.
+ * Uses simple counts from cass hits + diary status correlation.
+ */
+async function evidenceCountGate(
+  content: string,
+  config: Config
+): Promise<EvidenceGateResult> {
+  const keywords = extractKeywords(content);
+  const hits = await cassSearch(keywords.join(" "), { limit: 20, days: 90 });
+
+  if (hits.length === 0) {
+    return {
+      passed: true,  // No evidence either way - allow as draft
+      reason: "No historical evidence found, proposing as draft",
+      suggestedState: "draft",
+      sessionCount: 0, successCount: 0, failureCount: 0
+    };
+  }
+
+  // Group by unique session
+  const sessions = new Set(hits.map(h => h.source_path));
+
+  // Try to correlate with diaries to get success/failure counts
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (const sessionPath of sessions) {
+    const diary = await findDiaryBySession(sessionPath);
+    if (diary) {
+      if (diary.status === "success") successCount++;
+      else if (diary.status === "failure") failureCount++;
+    }
+  }
+
+  // Decision logic
+  const sessionCount = sessions.size;
+
+  // Gate 1: If only 1 session, too early to generalize
+  if (sessionCount === 1) {
+    return {
+      passed: true,
+      reason: "Single session only - proposing as draft for further validation",
+      suggestedState: "draft",
+      sessionCount, successCount, failureCount
+    };
+  }
+
+  // Gate 2: If more failures than successes, reject outright
+  if (failureCount > successCount && failureCount >= 2) {
+    return {
+      passed: false,
+      reason: `Pattern appears in ${failureCount} failed sessions vs ${successCount} successful - rejecting`,
+      suggestedState: "draft",
+      sessionCount, successCount, failureCount
+    };
+  }
+
+  // Gate 3: Strong evidence → allow as active candidate
+  if (successCount >= 3 && failureCount === 0) {
+    return {
+      passed: true,
+      reason: `Strong evidence: ${successCount} successful sessions, 0 failures`,
+      suggestedState: "active",
+      sessionCount, successCount, failureCount
+    };
+  }
+
+  // Default: pass to LLM for refinement, suggest draft
+  return {
+    passed: true,
+    reason: `Mixed evidence: ${sessionCount} sessions (${successCount} success, ${failureCount} failure)`,
+    suggestedState: "draft",
+    sessionCount, successCount, failureCount
+  };
+}
+```
+
+**Full Validator (with Evidence Gate)**:
+
 ```typescript
 async function validateDelta(
   delta: PlaybookDelta,
   config: Config
-): Promise<{ valid: boolean; reason: string; evidence: string[] }> {
+): Promise<{ valid: boolean; reason: string; evidence: string[]; suggestedState: "draft" | "active" }> {
   // Only validate new rules
-  if (delta.type !== "add") return { valid: true, reason: "N/A", evidence: [] };
+  if (delta.type !== "add") return { valid: true, reason: "N/A", evidence: [], suggestedState: "active" };
+
+  // ========== NEW: Evidence-count gate (pre-LLM) ==========
+  const gateResult = await evidenceCountGate(delta.bullet.content, config);
+
+  if (!gateResult.passed) {
+    return {
+      valid: false,
+      reason: gateResult.reason,
+      evidence: [],
+      suggestedState: "draft"
+    };
+  }
+
+  // Skip LLM if evidence is overwhelming
+  if (gateResult.suggestedState === "active" && gateResult.successCount >= 5) {
+    return {
+      valid: true,
+      reason: `Auto-accepted: ${gateResult.successCount} successful sessions with no failures`,
+      evidence: [],
+      suggestedState: "active"
+    };
+  }
+  // ========== End evidence gate ==========
 
   // Extract validation keywords
   const keywords = extractKeywords(delta.bullet.content);
@@ -985,7 +1250,7 @@ async function validateDelta(
     days: 90  // Look further back for validation
   });
 
-  // LLM verdict
+  // LLM verdict (only called if evidence gate passed but needs refinement)
   const verdict = await llm.generateObject({
     schema: z.object({
       valid: z.boolean(),
@@ -1342,6 +1607,74 @@ async function safeCassSearch(
 
     console.error(`[cass-memory] cass error: ${errorInfo.name}`);
     return [];
+  }
+}
+```
+
+### Security: Secret Sanitization (CRITICAL)
+
+Sessions may contain secrets (tokens, passwords, API keys). Sanitize before writing to persistent storage.
+
+```typescript
+// High-yield patterns that catch most secrets
+const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
+  // AWS
+  { pattern: /AKIA[0-9A-Z]{16}/g, replacement: "[AWS_ACCESS_KEY]" },
+  { pattern: /[A-Za-z0-9/+=]{40}(?=\s|$|")/g, replacement: "[AWS_SECRET_KEY]" },
+
+  // Generic API keys/tokens
+  { pattern: /Bearer\s+[A-Za-z0-9\-\._~\+\/]+=*/g, replacement: "[BEARER_TOKEN]" },
+  { pattern: /api[_-]?key["\s:=]+["']?[A-Za-z0-9\-_]{20,}["']?/gi, replacement: "[API_KEY]" },
+  { pattern: /token["\s:=]+["']?[A-Za-z0-9\-_]{20,}["']?/gi, replacement: "[TOKEN]" },
+
+  // Private keys
+  { pattern: /-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g, replacement: "[PRIVATE_KEY]" },
+
+  // Passwords in common formats
+  { pattern: /password["\s:=]+["'][^"']{8,}["']/gi, replacement: 'password="[REDACTED]"' },
+
+  // GitHub tokens
+  { pattern: /ghp_[A-Za-z0-9]{36}/g, replacement: "[GITHUB_PAT]" },
+  { pattern: /github_pat_[A-Za-z0-9_]{22,}/g, replacement: "[GITHUB_PAT]" },
+
+  // Slack tokens
+  { pattern: /xox[baprs]-[A-Za-z0-9-]+/g, replacement: "[SLACK_TOKEN]" },
+
+  // Database URLs with credentials
+  { pattern: /(postgres|mysql|mongodb):\/\/[^:]+:[^@]+@/gi, replacement: "$1://[USER]:[PASS]@" }
+];
+
+function sanitize(text: string, config: { enabled: boolean; extraPatterns?: RegExp[] }): string {
+  if (!config.enabled) return text;
+
+  let result = text;
+
+  // Built-in patterns
+  for (const { pattern, replacement } of SECRET_PATTERNS) {
+    result = result.replace(pattern, replacement);
+  }
+
+  // User-configured extra patterns
+  for (const pattern of config.extraPatterns || []) {
+    result = result.replace(pattern, "[REDACTED]");
+  }
+
+  return result;
+}
+
+// Apply sanitization at these points:
+// 1. After cassExport, before passing to LLM
+// 2. Before writing DiaryEntry to disk
+// 3. Before storing content in PlaybookBullet
+// 4. In context output (already sanitized if stored sanitized)
+```
+
+**Config**:
+```json
+{
+  "sanitization": {
+    "enabled": true,
+    "extraPatterns": ["INTERNAL_[A-Z_]+_KEY"]
   }
 }
 ```
@@ -1861,12 +2194,40 @@ server.setRequestHandler("tools/call", async (request) => {
 | P7 | Local semantic search | 3h | 4× | 3 |
 | P8 | Forget command + toxic log | 1h | 3× | 2 |
 | P9 | Stats command (health dashboard) | 2h | 2× | 3 |
+| **P10** | **State lifecycle (draft/active/retired)** | 1h | 10× | 1 |
+| **P11** | **Evidence-count gate (pre-LLM)** | 1h | 8× | 2 |
+| **P12** | **Secret sanitization** | 1h | ∞ (security) | 1 |
+| **P13** | **Doctor command** | 2h | 5× (DX) | 2 |
+| **P14** | **Kind enum (project/stack/workflow)** | 30m | 3× | 1 |
+
+### Schema Naming Convention
+
+**Decision**: Use camelCase in TypeScript, accept both camelCase and snake_case on YAML load, emit camelCase on save.
+
+```typescript
+// On load: normalize both conventions
+function normalizeYamlKeys(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(normalizeYamlKeys);
+  if (obj && typeof obj === "object") {
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => [
+        k.replace(/_([a-z])/g, (_, c) => c.toUpperCase()), // snake_case → camelCase
+        normalizeYamlKeys(v)
+      ])
+    );
+  }
+  return obj;
+}
+```
 
 ### Phase 1: Foundation + High-ROI Core
 
 - [ ] Project setup: Bun + TypeScript + Vercel AI SDK
 - [ ] Enhanced types with FeedbackEvent timestamps (P1)
 - [ ] Confidence decay algorithm (P1)
+- [ ] **State lifecycle (draft/active/retired) (P10)**
+- [ ] **Kind enum (project_convention/stack_pattern/workflow_rule/anti_pattern) (P14)**
+- [ ] **Secret sanitization layer (P12) - SECURITY CRITICAL**
 - [ ] Effective score calculation with 4× harmful multiplier (P4)
 - [ ] Configuration management (load/save config.json)
 - [ ] cass integration wrapper with error handling
@@ -1886,6 +2247,8 @@ server.setRequestHandler("tools/call", async (request) => {
 - [ ] Mark command with event timestamps
 - [ ] Deterministic curator with decay-aware pruning
 - [ ] Processed.log tracking
+- [ ] **Evidence-count gate before validator (P11)**
+- [ ] **Doctor command for system health (P13)**
 
 **Deliverable**: Full diary → reflect → curate pipeline with anti-pattern learning
 
