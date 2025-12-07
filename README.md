@@ -536,6 +536,15 @@ const SECRET_PATTERNS = [
 ];
 ```
 
+#### Sanitization Application Points (P12)
+
+- **After cass export, before any LLM call**: sanitize raw session content before prompting to prevent secret echoing.
+- **Before persisting DiaryEntry**: run `sanitize()` on diary text so logs on disk never contain secrets.
+- **Before creating PlaybookBullet**: sanitize bullet content/evidence; store only cleaned text.
+- **Context output guard**: validate that hydrated bullets/snippets are already sanitized (defense in depth).
+
+Golden rule: never send or persist unsanitized session content—sanitize upstream and verify downstream.
+
 ### Privacy Model
 
 | Feature | Default | Privacy Impact |

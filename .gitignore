@@ -39,3 +39,7 @@ htmlcov/
 *.swp
 *.swo
 
+# Node.js / Bun
+node_modules/
+tsconfig.tsbuildinfo
+
