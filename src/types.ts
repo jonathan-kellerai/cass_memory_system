@@ -233,6 +233,23 @@ export type DiaryEntry = z.infer<typeof DiaryEntrySchema>;
 // CONFIGURATION
 // ============================================================================
 
+// Sanitization configuration (extraPatterns are strings in config, compiled to RegExp at runtime)
+export const SanitizationConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  extraPatterns: z.array(z.string()).default([])
+});
+export type SanitizationConfig = z.infer<typeof SanitizationConfigSchema>;
+
+// Scoring configuration section
+export const ScoringConfigSectionSchema = z.object({
+  decayHalfLifeDays: z.number().default(90),
+  harmfulMultiplier: z.number().default(4),
+  minFeedbackForActive: z.number().default(3),
+  minHelpfulForProven: z.number().default(10),
+  maxHarmfulRatioForProven: z.number().default(0.1)
+});
+export type ScoringConfigSection = z.infer<typeof ScoringConfigSectionSchema>;
+
 export const ConfigSchema = z.object({
   schema_version: z.number().default(1),
   // Nested LLM config (preferred)
@@ -248,6 +265,7 @@ export const ConfigSchema = z.object({
   playbookPath: z.string().default('~/.cass-memory/playbook.yaml'),
   diaryDir: z.string().default('~/.cass-memory/diary'),
   diaryPath: z.string().optional(), // Alias for diaryDir
+  scoring: ScoringConfigSectionSchema.default({}),
   // Reflector settings
   maxReflectorIterations: z.number().default(3),
   autoReflect: z.boolean().default(false),
@@ -266,6 +284,8 @@ export const ConfigSchema = z.object({
   semanticSearchEnabled: z.boolean().default(false),
   verbose: z.boolean().default(false),
   jsonOutput: z.boolean().default(false),
+  // Scoring
+  scoring: ScoringConfigSectionSchema.default({}),
   // Sanitization
   sanitization: z.object({
     enabled: z.boolean().default(true),
