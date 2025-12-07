@@ -1,13 +1,7 @@
 import { parse, stringify } from 'yaml';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {
-  Playbook,
-  PlaybookSchema,
-  PlaybookBullet,
-  Config,
-  NewBulletData,
-} from './types';
+import { Playbook, PlaybookBullet, Config, NewBulletData, PlaybookSchema } from './types';
 import { generateBulletId, extractAgentFromPath, warn, error } from './utils';
 
 const DEFAULT_DECAY_HALF_LIFE_DAYS = 90;
@@ -124,6 +118,7 @@ export function addBullet(
     promotedAt: undefined,
     helpfulCount: 0,
     harmfulCount: 0,
+    feedbackEvents: [],
     helpfulEvents: [],
     harmfulEvents: [],
     lastValidatedAt: undefined,
