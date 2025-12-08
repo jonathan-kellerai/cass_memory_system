@@ -462,6 +462,41 @@ export async function findDiaryBySession(
   return diaries.find(d => d.sessionPath === sessionPath);
 }
 
+/**
+ * List diary entries from the past N days.
+ * Useful for stats, recent activity summaries, and trend analysis.
+ *
+ * @param diaryDir - Directory containing diary JSON files
+ * @param days - Number of days to look back (default: 7)
+ * @returns Array of DiaryEntry objects sorted by timestamp (newest first)
+ *
+ * @example
+ * // Get last week's diaries
+ * const recent = await listRecentDiaries("~/.cass-memory/diary", 7);
+ * console.log(`${recent.length} diaries in the past week`);
+ *
+ * @example
+ * // Get last 30 days for monthly summary
+ * const monthly = await listRecentDiaries(config.diaryDir, 30);
+ */
+export async function listRecentDiaries(
+  diaryDir: string,
+  days: number = 7
+): Promise<DiaryEntry[]> {
+  // Load all diaries (already sorted by timestamp)
+  const allDiaries = await loadAllDiaries(diaryDir);
+
+  // Calculate cutoff date
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - days);
+
+  // Filter to only recent diaries
+  return allDiaries.filter(diary => {
+    const diaryDate = new Date(diary.timestamp);
+    return diaryDate >= cutoffDate;
+  });
+}
+
 // --- Safe Extraction Wrapper ---
 
 /**
