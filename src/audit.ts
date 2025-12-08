@@ -1,6 +1,6 @@
 import { Config, Playbook, PlaybookBullet, AuditViolation } from "./types.js";
 import { cassExport } from "./cass.js";
-import { PROMPTS, llmWithFallback } from "./llm.js"; 
+import { PROMPTS, llmWithFallback, fillPrompt } from "./llm.js"; 
 import { z } from "zod";
 import { log, warn } from "./utils.js";
 

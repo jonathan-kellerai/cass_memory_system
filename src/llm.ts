@@ -570,9 +570,12 @@ export async function runValidator(
   return llmWithRetry(async () => {
     const object = await generateObjectSafe(ValidatorOutputSchema, prompt, config);
 
+    const supporting = object.evidence?.supporting ?? [];
+    const contradicting = object.evidence?.contradicting ?? [];
+
     const mappedEvidence = [
-      ...object.evidence.supporting.map((s: string) => ({ sessionPath: "unknown", snippet: s, supports: true })),
-      ...object.evidence.contradicting.map((s: string) => ({ sessionPath: "unknown", snippet: s, supports: false }))
+      ...supporting.map((s: string) => ({ sessionPath: "unknown", snippet: s, supports: true })),
+      ...contradicting.map((s: string) => ({ sessionPath: "unknown", snippet: s, supports: false }))
     ];
 
     return {
