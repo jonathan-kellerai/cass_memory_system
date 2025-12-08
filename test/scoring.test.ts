@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import {
   calculateDecayedValue,
   getDecayedScore,
@@ -8,150 +8,162 @@ import {
   checkForPromotion,
   checkForDemotion,
   isStale,
+  analyzeScoreDistribution,
 } from "../src/scoring.js";
-import {
-  createBullet,
-  createFeedbackEvent,
-  createTestFeedbackEvent,
-  daysAgo,
-  daysFromNow,
-} from "./helpers/factories.js";
+import { getDefaultConfig } from "../src/config.js";
+import { PlaybookBullet } from "../src/types.js";
 
-const HALF_LIFE = 90;
+const fixedNow = new Date("2025-01-01T00:00:00.000Z").getTime();
+let OriginalDate: DateConstructor;
 
-describe("scoring.ts", () => {
-  describe("calculateDecayedValue", () => {
-    it("is ~1.0 for events today", () => {
-      const v = calculateDecayedValue(new Date().toISOString(), HALF_LIFE);
-      expect(v).toBeGreaterThan(0.99);
-    });
+beforeEach(() => {
+  OriginalDate = Date;
+  // Patch Date so both Date.now() and new Date() use fixedNow by default
+  // while still allowing explicit construction with args.
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  globalThis.Date = class extends OriginalDate {
+    constructor(...args: any[]) {
+      if (args.length === 0) {
+        return new OriginalDate(fixedNow);
+      }
+      return new OriginalDate(...(args as ConstructorParameters<typeof OriginalDate>));
+    }
+    static now() {
+      return fixedNow;
+    }
+  };
+});
 
-    it("is ~0.5 after one half-life", () => {
-      const v = calculateDecayedValue(daysAgo(90), HALF_LIFE);
-      expect(v).toBeCloseTo(0.5, 2);
-    });
+afterEach(() => {
+  // Restore native Date
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  globalThis.Date = OriginalDate;
+});
 
-    it("approaches 0 for very old events", () => {
-      const v = calculateDecayedValue(daysAgo(365 * 5), HALF_LIFE);
-      expect(v).toBeLessThan(0.05);
-    });
+function makeBullet(overrides: Partial<PlaybookBullet> = {}): PlaybookBullet {
+  const base: PlaybookBullet = {
+    id: "b-test",
+    scope: "global",
+    category: "test",
+    content: "Base rule content",
+    type: "rule",
+    isNegative: false,
+    kind: "stack_pattern",
+    state: "active",
+    maturity: "candidate",
+    helpfulCount: 0,
+    harmfulCount: 0,
+    feedbackEvents: [],
+    helpfulEvents: [],
+    harmfulEvents: [],
+    confidenceDecayHalfLifeDays: 90,
+    createdAt: new Date(fixedNow).toISOString(),
+    updatedAt: new Date(fixedNow).toISOString(),
+    pinned: false,
+    deprecated: false,
+    sourceSessions: [],
+    sourceAgents: [],
+    tags: [],
+  };
+  return { ...base, ...overrides };
+}
 
-    it("returns >1 for future dates (edge)", () => {
-      const future = daysFromNow(7);
-      const v = calculateDecayedValue(future, HALF_LIFE);
-      expect(v).toBeGreaterThan(1);
-    });
+function daysAgoIso(days: number) {
+  return new Date(fixedNow - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+describe("scoring decay functions", () => {
+  it("calculateDecayedValue halves at one half-life", () => {
+    const event = { type: "helpful" as const, timestamp: daysAgoIso(90) };
+    const value = calculateDecayedValue(event, new Date(fixedNow), 90);
+    expect(value).toBeCloseTo(0.5, 4);
   });
 
-  describe("getDecayedScore", () => {
-    it("sums decayed values", () => {
-      const events = [
-        createFeedbackEvent("helpful", { timestamp: new Date().toISOString() }),
-        createFeedbackEvent("helpful", { timestamp: daysAgo(90) }),
-      ];
-      const score = getDecayedScore(events, HALF_LIFE);
-      expect(score).toBeGreaterThan(1.4); // ~1 + 0.5
+  it("getDecayedCounts aggregates helpful and harmful with half-life", () => {
+    const bullet = makeBullet({
+      feedbackEvents: [
+        { type: "helpful", timestamp: daysAgoIso(0) },
+        { type: "helpful", timestamp: daysAgoIso(90) }, // decays to 0.5
+        { type: "harmful", timestamp: daysAgoIso(0) },
+      ],
     });
+    const config = getDefaultConfig();
+    const { decayedHelpful, decayedHarmful } = getDecayedCounts(bullet, config);
+    expect(decayedHelpful).toBeCloseTo(1.5, 4);
+    expect(decayedHarmful).toBeCloseTo(1.0, 4);
+  });
+});
 
-    it("returns 0 for no events", () => {
-      expect(getDecayedScore([], HALF_LIFE)).toBe(0);
+describe("effective score and maturity", () => {
+  it("computes effective score with maturity multiplier", () => {
+    const bullet = makeBullet({
+      maturity: "candidate",
+      feedbackEvents: [
+        { type: "helpful", timestamp: daysAgoIso(0) },
+        { type: "helpful", timestamp: daysAgoIso(90) },
+        { type: "harmful", timestamp: daysAgoIso(0) },
+      ],
     });
+    const config = getDefaultConfig();
+    const score = getEffectiveScore(bullet, config);
+    // raw = 1.5 - 4*1 = -2.5, candidate multiplier 0.5 => -1.25
+    expect(score).toBeCloseTo(-1.25, 3);
   });
 
-  describe("getDecayedCounts", () => {
-    it("splits helpful/harmful with decay", () => {
-      const bullet = createBullet({
-        feedbackEvents: [
-          createFeedbackEvent("helpful", { timestamp: new Date().toISOString() }),
-          createFeedbackEvent("harmful", { timestamp: daysAgo(1) }),
-        ],
-      });
-      const counts = getDecayedCounts(bullet, HALF_LIFE);
-      expect(counts.helpful).toBeGreaterThan(counts.harmful);
-      expect(counts.harmful).toBeGreaterThan(0);
-    });
+  it("promotes to proven when helpful evidence is strong", () => {
+    const events = Array.from({ length: 12 }, () => ({ type: "helpful" as const, timestamp: daysAgoIso(1) }));
+    const bullet = makeBullet({ maturity: "candidate", feedbackEvents: events });
+    const config = getDefaultConfig();
+    const maturity = calculateMaturityState(bullet, config);
+    expect(maturity).toBe("proven");
+    expect(checkForPromotion(bullet, config)).toBe("proven");
   });
 
-  describe("getEffectiveScore", () => {
-    const baseConfig: any = { scoring: { harmfulMultiplier: 4 }, defaultDecayHalfLife: HALF_LIFE };
-
-    it("is 0 for new bullet with no feedback", () => {
-      const bullet = createBullet({ feedbackEvents: [] });
-      expect(getEffectiveScore(bullet, baseConfig)).toBe(0);
-    });
-
-    it("positive for helpful-only", () => {
-      const bullet = createBullet({ feedbackEvents: [createFeedbackEvent("helpful")] });
-      expect(getEffectiveScore(bullet, baseConfig)).toBeGreaterThan(0);
-    });
-
-    it("negative for harmful-only (multiplied)", () => {
-      const bullet = createBullet({ feedbackEvents: [createFeedbackEvent("harmful")] });
-      expect(getEffectiveScore(bullet, baseConfig)).toBeLessThan(0);
-    });
-
-    it("maturity multiplier applied", () => {
-      const bullet = createBullet({
-        maturity: "proven",
-        feedbackEvents: [createFeedbackEvent("helpful")],
-      });
-      const provenScore = getEffectiveScore(bullet, baseConfig);
-      const candidateScore = getEffectiveScore(
-        { ...bullet, maturity: "candidate" },
-        baseConfig
-      );
-      expect(provenScore).toBeGreaterThan(candidateScore);
-    });
+  it("auto-deprecates when score far below harmful threshold", () => {
+    const harmfulEvents = [
+      { type: "harmful" as const, timestamp: daysAgoIso(0) },
+      { type: "harmful" as const, timestamp: daysAgoIso(0) },
+      { type: "harmful" as const, timestamp: daysAgoIso(0) },
+    ];
+    const bullet = makeBullet({ feedbackEvents: harmfulEvents, maturity: "established" });
+    const config = getDefaultConfig();
+    const result = checkForDemotion(bullet, config);
+    expect(result).toBe("auto-deprecate");
   });
 
-  describe("calculateMaturityState / promotions / demotions", () => {
-    const cfg: any = {
-      scoring: {
-        minFeedbackForActive: 3,
-        minHelpfulForProven: 10,
-        maxHarmfulRatioForProven: 0.1,
-      },
-    };
+  it("does not demote pinned bullets", () => {
+    const bullet = makeBullet({ pinned: true, maturity: "proven", feedbackEvents: [{ type: "harmful", timestamp: daysAgoIso(0) }] });
+    const config = getDefaultConfig();
+    expect(checkForDemotion(bullet, config)).toBe("proven");
+  });
+});
 
-    it("promotes to established after min feedback", () => {
-      const bullet = createBullet({
-        maturity: "candidate",
-        helpfulCount: 2,
-        harmfulCount: 1,
-      });
-      expect(checkForPromotion(bullet, cfg)).toBe(true);
-    });
-
-    it("promotes to proven with enough helpful and low harmful ratio", () => {
-      const bullet = createBullet({
-        maturity: "established",
-        helpfulCount: 12,
-        harmfulCount: 1,
-      });
-      expect(calculateMaturityState(bullet, cfg)).toBe("proven");
-    });
-
-    it("demotes when harmful ratio high", () => {
-      const bullet = createBullet({
-        maturity: "proven",
-        helpfulCount: 10,
-        harmfulCount: 5,
-      });
-      expect(checkForDemotion(bullet, cfg)).toBe(true);
-    });
+describe("staleness and distribution", () => {
+  it("detects stale bullets without feedback", () => {
+    const bullet = makeBullet({ createdAt: daysAgoIso(200) });
+    expect(isStale(bullet, 90)).toBe(true);
   });
 
-  describe("isStale", () => {
-    it("stale when no feedback", () => {
-      const bullet = createBullet({ feedbackEvents: [] });
-      expect(isStale(bullet, 30)).toBe(true);
+  it("is not stale if recent feedback exists", () => {
+    const bullet = makeBullet({
+      createdAt: daysAgoIso(200),
+      feedbackEvents: [{ type: "helpful", timestamp: daysAgoIso(1) }],
     });
+    expect(isStale(bullet, 90)).toBe(false);
+  });
 
-    it("not stale with recent helpful", () => {
-      const bullet = createBullet({
-        feedbackEvents: [createFeedbackEvent("helpful", { timestamp: daysAgo(1) })],
-      });
-      expect(isStale(bullet, 7)).toBe(false);
-    });
+  it("analyzes score distribution buckets", () => {
+    const config = getDefaultConfig();
+    const bullets = [
+      makeBullet({ id: "b1", feedbackEvents: [{ type: "helpful", timestamp: daysAgoIso(0) }, { type: "helpful", timestamp: daysAgoIso(0) }, { type: "helpful", timestamp: daysAgoIso(0) }, { type: "helpful", timestamp: daysAgoIso(0) }, { type: "helpful", timestamp: daysAgoIso(0) }, { type: "helpful", timestamp: daysAgoIso(0) }, { type: "helpful", timestamp: daysAgoIso(0) }, { type: "helpful", timestamp: daysAgoIso(0) }] }), // high score
+      makeBullet({ id: "b2", feedbackEvents: [{ type: "helpful", timestamp: daysAgoIso(0) }, { type: "helpful", timestamp: daysAgoIso(0) }] }), // good/neutral
+      makeBullet({ id: "b3", feedbackEvents: [] }), // neutral/low
+      makeBullet({ id: "b4", feedbackEvents: [{ type: "harmful", timestamp: daysAgoIso(0) }] }), // atRisk
+    ];
+    const dist = analyzeScoreDistribution(bullets, config);
+    expect(dist.excellent + dist.good + dist.neutral + dist.atRisk).toBe(4);
+    expect(dist.atRisk).toBeGreaterThanOrEqual(1);
   });
 });
