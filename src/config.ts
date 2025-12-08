@@ -2,17 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import yaml from "yaml";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { Config, ConfigSchema } from "./types.js";
-import { expandPath, fileExists, warn } from "./utils.js";
+import { expandPath, fileExists, log, warn } from "./utils.js";
 
-// ---------------------------------------------------------------------------
-// Defaults (aligned with ConfigSchema in types.ts)
-// ---------------------------------------------------------------------------
+const execAsync = promisify(exec);
+
+// --- Defaults ---
 
 export const DEFAULT_CONFIG: Config = {
   schema_version: 1,
   provider: "anthropic",
-  model: "claude-sonnet-4-20250514",
+  model: "claude-3-5-sonnet-20241022",
   cassPath: "cass",
   playbookPath: "~/.cass-memory/playbook.yaml",
   diaryDir: "~/.cass-memory/diary",
@@ -25,151 +27,47 @@ export const DEFAULT_CONFIG: Config = {
   maxHistoryInContext: 10,
   sessionLookbackDays: 7,
   validationLookbackDays: 90,
-  scoring: {
-    decayHalfLifeDays: 90,
-    harmfulMultiplier: 4,
-    minFeedbackForActive: 1,
-    minHelpfulForProven: 10,
-    maxHarmfulRatioForProven: 0.1,
-  },
   validationEnabled: true,
   enrichWithCrossAgent: true,
   semanticSearchEnabled: false,
   verbose: false,
   jsonOutput: false,
+  scoring: {
+    decayHalfLifeDays: 90,
+    harmfulMultiplier: 4,
+    minFeedbackForActive: 3,
+    minHelpfulForProven: 10,
+    maxHarmfulRatioForProven: 0.1
+  },
   sanitization: {
     enabled: true,
-    extraPatterns: [] as string[],
-    auditLog: false,
-    auditLevel: "info" as const,
+    extraPatterns: [],
+    auditLog: false
   },
 };
 
-// Convenience accessors ------------------------------------------------------
+export function getDefaultConfig(): Config {
+  return {
+    ...DEFAULT_CONFIG,
+    sanitization: { ...DEFAULT_CONFIG.sanitization }
+  };
+}
 
 export function getUserConfigPath(): string {
   return expandPath("~/.cass-memory/config.json");
 }
 
-export function getDefaultConfig(): Config {
-  return {
-    ...DEFAULT_CONFIG,
-    sanitization: { ...DEFAULT_CONFIG.sanitization },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-async function detectRepoConfig(cwd: string): Promise<string | null> {
-  const cassDir = path.join(cwd, ".cass");
-  const candidate = path.join(cassDir, "config.yaml");
-  if (await fileExists(candidate)) return candidate;
-  return null;
-}
-
-function normalizeKeys(obj: any): any {
-  if (Array.isArray(obj)) return obj.map(normalizeKeys);
-  if (obj && typeof obj === "object") {
-    const out: any = {};
-    for (const key of Object.keys(obj)) {
-      const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-      out[camel] = normalizeKeys(obj[key]);
-    }
-    return out;
-  }
-  return obj;
-}
-
-async function loadConfigFile(filePath: string): Promise<Partial<Config>> {
-  const expanded = expandPath(filePath);
-  if (!(await fileExists(expanded))) return {};
-
-  try {
-    const content = await fs.readFile(expanded, "utf-8");
-    const ext = path.extname(expanded).toLowerCase();
-    if (ext === ".yaml" || ext === ".yml") {
-      return normalizeKeys(yaml.parse(content));
-    }
-    return JSON.parse(content);
-  } catch (err: any) {
-    warn(`Failed to load config ${expanded}: ${err.message}`);
-    return {};
-  }
-}
-
-function deepMergeConfig(base: Config, override: Partial<Config>): Config {
-  const merged: Config = { ...base, ...override } as Config;
-
-  // Sanitization needs deep merge
-  merged.sanitization = {
-    ...base.sanitization,
-    ...(override.sanitization || {}),
-  };
-
-  // Nested llm (if present in overrides) should override provider/model
-  if ((override as any).llm) {
-    const llm = (override as any).llm;
-    merged.provider = llm.provider ?? merged.provider;
-    merged.model = llm.model ?? merged.model;
-  }
-
-  return merged;
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-export async function loadConfig(
-  cliOverrides: Partial<Config> = {},
-  cwd: string = process.cwd()
-): Promise<Config> {
-  const userConfig = await loadConfigFile(getUserConfigPath());
-  const repoConfigPath = await detectRepoConfig(cwd);
-  const repoConfig = repoConfigPath ? await loadConfigFile(repoConfigPath) : {};
-
-  let merged = getDefaultConfig();
-  merged = deepMergeConfig(merged, userConfig);
-  merged = deepMergeConfig(merged, repoConfig);
-  merged = deepMergeConfig(merged, cliOverrides);
-
-  const validated = ConfigSchema.safeParse(merged);
-  if (!validated.success) {
-    throw new Error(`Configuration validation failed: ${validated.error.message}`);
-  }
-
-  // Verbose env override
-  if (process.env.CASS_MEMORY_VERBOSE === "1" || process.env.CASS_MEMORY_VERBOSE === "true") {
-    validated.data.verbose = true;
-  }
-
-  return validated.data;
-}
-
-export async function saveConfig(config: Config): Promise<void> {
-  const configPath = getUserConfigPath();
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
-  const tmp = `${configPath}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(config, null, 2), "utf-8");
-  await fs.rename(tmp, configPath);
-}
-
 export async function ensureConfigDirs(config: Config): Promise<void> {
   const dirs = [
-    expandPath(path.dirname(config.playbookPath)),
-    expandPath(config.diaryDir),
+    path.dirname(expandPath(config.playbookPath)),
+    expandPath(config.diaryDir)
   ];
+
   for (const dir of dirs) {
     await fs.mkdir(dir, { recursive: true });
   }
 }
 
-/**
- * Compile sanitization settings into the format expected by sanitize().
- * Converts user-provided pattern strings into RegExp instances; skips invalid patterns.
- */
 export function getSanitizeConfig(config: Config): { enabled: boolean; extraPatterns?: RegExp[] } {
   const { sanitization } = config;
   if (!sanitization?.enabled) return { enabled: false };
@@ -185,4 +83,110 @@ export function getSanitizeConfig(config: Config): { enabled: boolean; extraPatt
     }, []) ?? [];
 
   return { enabled: true, extraPatterns: compiled.length ? compiled : undefined };
+}
+
+// --- Repo Context ---
+
+async function detectRepoContext(): Promise<{ inRepo: boolean; repoRoot?: string; cassDir?: string }> {
+  try {
+    const { stdout } = await execAsync("git rev-parse --show-toplevel");
+    const repoRoot = stdout.trim();
+    const cassDir = path.join(repoRoot, ".cass");
+    const hasCassDir = await fileExists(cassDir);
+    
+    return {
+      inRepo: true,
+      repoRoot,
+      cassDir: hasCassDir ? cassDir : undefined,
+    };
+  } catch {
+    return { inRepo: false };
+  }
+}
+
+// --- Loading ---
+
+async function loadConfigFile(filePath: string): Promise<Partial<Config>> {
+  const expanded = expandPath(filePath);
+  if (!(await fileExists(expanded))) return {};
+
+  try {
+    const content = await fs.readFile(expanded, "utf-8");
+    const ext = path.extname(expanded);
+    
+    if (ext === ".yaml" || ext === ".yml") {
+      return normalizeConfigKeys(yaml.parse(content));
+    } else {
+      return JSON.parse(content);
+    }
+  } catch (error: any) {
+    warn(`Failed to load config from ${expanded}: ${error.message}`);
+    return {};
+  }
+}
+
+function normalizeConfigKeys(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(normalizeConfigKeys);
+  if (obj && typeof obj === "object") {
+    const newObj: any = {};
+    for (const key of Object.keys(obj)) {
+      const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+      newObj[camelKey] = normalizeConfigKeys(obj[key]);
+    }
+    return newObj;
+  }
+  return obj;
+}
+
+export async function loadConfig(cliOverrides: Partial<Config> = {}): Promise<Config> {
+  // 1. User Global Config
+  const globalConfigPath = expandPath("~/.cass-memory/config.json");
+  const globalConfig = await loadConfigFile(globalConfigPath);
+
+  // 2. Repo Config
+  let repoConfig: Partial<Config> = {};
+  const repoContext = await detectRepoContext();
+  if (repoContext.cassDir) {
+    repoConfig = await loadConfigFile(path.join(repoContext.cassDir, "config.yaml"));
+  }
+
+  // 3. Merge: Defaults -> Global -> Repo -> CLI
+  const merged = {
+    ...DEFAULT_CONFIG,
+    ...globalConfig,
+    ...repoConfig,
+    ...cliOverrides,
+    // Deep merge sanitization
+    sanitization: {
+      ...DEFAULT_CONFIG.sanitization,
+      ...(globalConfig.sanitization || {}),
+      ...(repoConfig.sanitization || {}),
+      ...(cliOverrides.sanitization || {}),
+    },
+    // Deep merge scoring
+    scoring: {
+        ...DEFAULT_CONFIG.scoring,
+        ...(globalConfig.scoring || {}),
+        ...(repoConfig.scoring || {}),
+        ...(cliOverrides.scoring || {}),
+    }
+  };
+
+  // 4. Validate
+  const result = ConfigSchema.safeParse(merged);
+  if (!result.success) {
+    warn(`Invalid configuration detected: ${result.error.message}`);
+    throw new Error(`Configuration validation failed: ${result.error.message}`);
+  }
+
+  if (process.env.CASS_MEMORY_VERBOSE === "1" || process.env.CASS_MEMORY_VERBOSE === "true") {
+    result.data.verbose = true;
+  }
+
+  return result.data;
+}
+
+export async function saveConfig(config: Config): Promise<void> {
+  const globalConfigPath = expandPath("~/.cass-memory/config.json");
+  await fs.writeFile(globalConfigPath, JSON.stringify(config, null, 2));
 }
