@@ -6,7 +6,7 @@ import { generateDiary } from "../diary.js";
 import { reflectOnSession } from "../reflect.js";
 import { validateDelta } from "../validate.js";
 import { curatePlaybook } from "../curate.js";
-import { expandPath, log, warn, error, now } from "../utils.js";
+import { expandPath, log, warn, error, now, fileExists } from "../utils.js";
 import { withLock } from "../lock.js";
 import { PlaybookDelta } from "../types.js";
 import chalk from "chalk";
@@ -33,11 +33,13 @@ export async function reflectCommand(
   }
   
   const globalPath = expandPath(config.playbookPath);
-  const logPath = expandPath(getProcessedLogPath(options.workspace, config.diaryDir));
+  const repoPath = expandPath(".cass/playbook.yaml");
+  const targetPlaybookPath = (await fileExists(repoPath)) ? repoPath : globalPath;
+  const logPath = expandPath(getProcessedLogPath(options.workspace));
 
   // We must lock the entire reflect process to ensure we don't duplicate work 
   // or overwrite the playbook/processed log with stale data.
-  await withLock(globalPath, async () => {
+  await withLock(targetPlaybookPath, async () => {
     const processedLog = new ProcessedLog(logPath);
     await processedLog.load();
 
@@ -118,11 +120,11 @@ export async function reflectCommand(
 
     if (allDeltas.length > 0) {
       // Reload fresh playbook again just in case
-      const freshPlaybook = await loadPlaybook(globalPath);
+      const freshPlaybook = await loadPlaybook(targetPlaybookPath);
       
       // Pass freshPlaybook as target (mutable), initialPlaybook as context (readonly, merged)
       const curation = curatePlaybook(freshPlaybook, allDeltas, config, initialPlaybook);
-      await savePlaybook(curation.playbook, globalPath);
+      await savePlaybook(curation.playbook, targetPlaybookPath);
       
       await processedLog.save();
 
