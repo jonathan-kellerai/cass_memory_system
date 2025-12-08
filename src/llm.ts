@@ -297,7 +297,7 @@ export function truncateForPrompt(content: string, maxChars = 50000): string {
 
 // --- Resilience Wrapper ---
 
-const LLM_RETRY_CONFIG = {
+export const LLM_RETRY_CONFIG = {
   maxRetries: 3,
   baseDelayMs: 1000,
   maxDelayMs: 30000,
@@ -314,7 +314,7 @@ const LLM_RETRY_CONFIG = {
   ]
 };
 
-async function llmWithRetry<T>(
+export async function llmWithRetry<T>(
   operation: () => Promise<T>,
   operationName: string
 ): Promise<T> {
