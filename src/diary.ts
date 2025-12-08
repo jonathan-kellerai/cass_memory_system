@@ -1,118 +1,190 @@
-import { z } from 'zod';
-import { generateObject } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai'; 
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { promisify } from 'node:util';
-import { exec } from 'node:child_process';
-import { Config, DiaryEntry, RelatedSession } from './types';
-import { sanitize } from './security';
-import { extractAgentFromPath } from './utils';
-import { getApiKey } from './llm';
+import path from "node:path";
+import fs from "node:fs/promises";
+import { z } from "zod";
+import { 
+  Config, 
+  DiaryEntry, 
+  DiaryEntrySchema, 
+  CassHit,
+  RelatedSession,
+  RelatedSessionSchema,
+  SanitizationConfig
+} from "./types.js";
+import { 
+  extractDiary, 
+  generateSearchQueries 
+} from "./llm.js";
+import { 
+  safeCassSearch, 
+  cassExport, 
+  cassSearch 
+} from "./cass.js";
+import { 
+  sanitize, 
+  verifySanitization 
+} from "./sanitize.js";
+import { 
+  generateDiaryId, 
+  extractKeywords, 
+  now, 
+  ensureDir, 
+  expandPath,
+  log,
+  warn,
+  error as logError
+} from "./utils.js";
 
-const execAsync = promisify(exec);
+// --- Helpers ---
 
-const DiarySchema = z.object({
-  status: z.enum(['success', 'failure', 'mixed']).describe("Overall session outcome"),
-  accomplishments: z.array(z.string()).describe("List of concrete achievements"),
-  decisions: z.array(z.string()).describe("Key technical decisions made"),
-  challenges: z.array(z.string()).describe("Problems encountered and blockers"),
-  preferences: z.array(z.string()).describe("User style preferences revealed"),
-  keyLearnings: z.array(z.string()).describe("Reusable insights and learnings"),
-});
-
-export async function generateDiary(sessionPath: string, config: Config): Promise<DiaryEntry> {
-  const content = await exportSessionSafe(sessionPath);
-  const sanitized = sanitize(content, { enabled: true });
+function extractSessionMetadata(sessionPath: string): { agent: string; workspace?: string } {
+  const normalized = path.normalize(sessionPath);
   
-  const agent = extractAgentFromPath(sessionPath);
-  const workspace = path.basename(path.dirname(path.dirname(sessionPath))); 
-
-  const extracted = await extractDiarySafe(sanitized, config);
-  const related = await enrichWithRelatedSessions(sanitized, config);
+  // Detect agent
+  let agent = "unknown";
+  if (normalized.includes(".claude")) agent = "claude";
+  else if (normalized.includes(".cursor")) agent = "cursor";
+  else if (normalized.includes(".codex")) agent = "codex";
+  else if (normalized.includes(".aider")) agent = "aider";
   
-  const entry: DiaryEntry = {
-    id: `diary-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+  return { agent };
+}
+
+async function enrichWithRelatedSessions(
+  diary: DiaryEntry, 
+  config: Config
+): Promise<DiaryEntry> {
+  if (!config.enrichWithCrossAgent) return diary;
+
+  // 1. Build keyword set from diary content
+  const textContent = [
+    ...diary.keyLearnings,
+    ...diary.challenges,
+    ...diary.accomplishments
+  ].join(" ");
+  
+  const keywords = extractKeywords(textContent);
+  if (keywords.length === 0) return diary;
+
+  // 2. Query cass
+  const query = keywords.slice(0, 5).join(" "); // Top 5 keywords
+  const hits = await safeCassSearch(query, {
+    limit: 5,
+    days: config.sessionLookbackDays,
+  }, config.cassPath);
+
+  // 3. Filter and Format
+  const related: RelatedSession[] = hits
+    .filter(h => h.agent !== diary.agent) // Cross-agent only
+    .map(h => ({
+      sessionPath: h.source_path,
+      agent: h.agent,
+      relevanceScore: h.score || 0, 
+      snippet: h.snippet
+    }));
+
+  // 4. Attach to diary
+  if (related.length > 0) {
+    diary.relatedSessions = related;
+  }
+
+  return diary;
+}
+
+// --- Main Generator ---
+
+export async function generateDiary(
+  sessionPath: string,
+  config: Config
+): Promise<DiaryEntry> {
+  log(`Generating diary for ${sessionPath}...`);
+
+  // 1. Export Session
+  const rawContent = await cassExport(sessionPath, "markdown", config.cassPath);
+  if (!rawContent) {
+    throw new Error(`Failed to export session: ${sessionPath}`);
+  }
+
+  // 2. Sanitize
+  const sanitizedContent = sanitize(rawContent, config.sanitization as SanitizationConfig);
+  
+  const verification = verifySanitization(sanitizedContent);
+  if (verification.containsPotentialSecrets) {
+    warn(`[Diary] Potential secrets detected after sanitization in ${sessionPath}: ${verification.warnings.join(", ")}`);
+  }
+
+  // 3. Extract Metadata
+  const metadata = extractSessionMetadata(sessionPath);
+
+  // 4. LLM Extraction
+  const ExtractionSchema = DiaryEntrySchema.omit({ 
+    id: true, 
+    sessionPath: true, 
+    timestamp: true, 
+    relatedSessions: true, 
+    searchAnchors: true 
+  });
+
+  const extracted = await extractDiary(
+    ExtractionSchema,
+    sanitizedContent,
+    { ...metadata, sessionPath },
+    config
+  );
+
+  // 5. Assemble Entry
+  const diary: DiaryEntry = {
+    id: generateDiaryId(sessionPath),
     sessionPath,
-    agent,
-    workspace,
-    timestamp: new Date().toISOString(),
-    ...extracted,
-    relatedSessions: related,
-    tags: [],
-    searchAnchors: []
+    timestamp: now(),
+    agent: metadata.agent,
+    workspace: metadata.workspace,
+    status: extracted.status,
+    accomplishments: extracted.accomplishments,
+    decisions: extracted.decisions,
+    challenges: extracted.challenges,
+    preferences: extracted.preferences,
+    keyLearnings: extracted.keyLearnings,
+    tags: extracted.tags,
+    searchAnchors: [], 
+    relatedSessions: [] // Initialize empty
   };
-  
-  await saveDiaryEntry(entry, config);
-  
-  return entry;
+
+  const anchorText = [
+    ...diary.keyLearnings, 
+    ...diary.challenges
+  ].join(" ");
+  diary.searchAnchors = extractKeywords(anchorText);
+
+  // 7. Enrich (Cross-Agent)
+  const enrichedDiary = await enrichWithRelatedSessions(diary, config);
+
+  return enrichedDiary;
 }
 
-async function exportSessionSafe(sessionPath: string): Promise<string> {
+// --- Persistence ---
+
+export async function saveDiary(diary: DiaryEntry, config: Config): Promise<void> {
+  const diaryPath = path.join(expandPath(config.diaryDir), `${diary.id}.json`);
+  await ensureDir(path.dirname(diaryPath));
+  
+  await fs.writeFile(diaryPath, JSON.stringify(diary, null, 2));
+  log(`Saved diary to ${diaryPath}`);
+}
+
+export async function loadDiary(idOrPath: string, config: Config): Promise<DiaryEntry | null> {
+  let fullPath = idOrPath;
+  if (!idOrPath.includes("/") && !idOrPath.endsWith(".json")) {
+    fullPath = path.join(expandPath(config.diaryDir), `${idOrPath}.json`);
+  }
+
+  if (!(await fs.stat(fullPath).catch(() => null))) return null;
+
   try {
-    // Use markdown for better LLM readability
-    const { stdout } = await execAsync(`cass export "${sessionPath}" --format markdown`);
-    return stdout;
-  } catch (error) {
-    throw new Error(`Failed to export session: ${error}`);
+    const content = await fs.readFile(fullPath, "utf-8");
+    const json = JSON.parse(content);
+    return DiaryEntrySchema.parse(json);
+  } catch (err: any) {
+    logError(`Failed to load diary ${fullPath}: ${err.message}`);
+    return null;
   }
-}
-
-async function extractDiarySafe(content: string, config: Config) {
-  if (!config.llm) {
-    return { status: 'mixed' as const, accomplishments: [], decisions: [], challenges: [], preferences: [], keyLearnings: [] };
-  }
-  
-  try {
-    const provider = config.llm.provider;
-    const apiKey = getApiKey(provider);
-    
-    let model;
-    if (provider === 'openai') {
-      const openai = createOpenAI({ apiKey });
-      model = openai(config.llm.model);
-    } else if (provider === 'anthropic') {
-      const anthropic = createAnthropic({ apiKey });
-      model = anthropic(config.llm.model);
-    } else if (provider === 'google') {
-      const google = createGoogleGenerativeAI({ apiKey });
-      model = google(config.llm.model);
-    } else {
-      throw new Error(`Unsupported provider: ${provider}`);
-    }
-
-    const { object } = await generateObject({
-      model,
-      schema: DiarySchema,
-      prompt: `Analyze the following coding session log and extract structured insights.
-Determine overall status (success/failure/mixed), accomplishments, decisions, challenges, user preferences, and key learnings.
-
-Session Log:
-${content.slice(0, 50000)}
-`
-    });
-    
-    return object;
-  } catch (error) {
-    console.error(`LLM extraction failed: ${error}`);
-    return { status: 'mixed' as const, accomplishments: [], decisions: [], challenges: [], preferences: [], keyLearnings: [] };
-  }
-}
-
-async function enrichWithRelatedSessions(content: string, config: Config): Promise<RelatedSession[]> {
-  // Placeholder for cross-agent enrichment
-  return []; 
-}
-
-async function saveDiaryEntry(entry: DiaryEntry, config: Config): Promise<void> {
-  const diaryDir = config.diaryPath ?? config.diaryDir;
-  if (!diaryDir) return;
-
-  await fs.mkdir(diaryDir, { recursive: true });
-  const filename = `${entry.id}.json`;
-  const filePath = path.join(diaryDir, filename);
-
-  await fs.writeFile(filePath, JSON.stringify(entry, null, 2));
 }
