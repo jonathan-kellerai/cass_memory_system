@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Config } from "./types.js";
 import { expandPath, ensureDir, fileExists, now } from "./utils.js";
-import { sanitize } from "./security.js";
+import { sanitize } from "./sanitize.js";
 import { getSanitizeConfig } from "./config.js";
 import { loadPlaybook, savePlaybook, findBullet } from "./playbook.js";
 import { calculateMaturityState } from "./scoring.js";

@@ -2,7 +2,7 @@ import { loadConfig } from "../config.js";
 import { cassAvailable, cassStats } from "../cass.js";
 import { fileExists, resolveRepoDir, resolveGlobalDir } from "../utils.js";
 import { isLLMAvailable } from "../llm.js";
-import { SECRET_PATTERNS, compileExtraPatterns } from "../security.js";
+import { SECRET_PATTERNS, compileExtraPatterns } from "../sanitize.js";
 import chalk from "chalk";
 import path from "node:path";
 

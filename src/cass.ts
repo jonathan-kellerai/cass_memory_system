@@ -10,7 +10,7 @@ import {
   Config
 } from "./types.js";
 import { log, error, warn, expandPath } from "./utils.js";
-import { sanitize } from "./security.js";
+import { sanitize, compileExtraPatterns } from "./sanitize.js";
 import { loadConfig, getSanitizeConfig } from "./config.js";
 
 const execFileAsync = promisify(execFile);
