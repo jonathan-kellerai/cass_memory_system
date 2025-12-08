@@ -210,28 +210,40 @@ export async function generateDiary(sessionPath: string, config: Config): Promis
   const workspace = path.basename(path.dirname(sessionPath));
 
   const metadata = { sessionPath, agent, workspace };
-  
-  const provider = (config.llm?.provider ?? config.provider);
-  const useLLM = (provider as string) !== "none";
 
-  let extracted: z.infer<typeof ExtractionSchema>;
-  
+  // Use LLM if API key is available
+  const useLLM = Boolean(config.apiKey);
+
+  let rawExtracted: Partial<z.infer<typeof ExtractionSchema>>;
+
   if (useLLM) {
     try {
-      extracted = await extractDiary(
+      rawExtracted = await extractDiary(
         ExtractionSchema,
-        sanitizedContent, 
+        sanitizedContent,
         metadata,
         config
       );
     } catch (e) {
       // Fallback to basic extraction if LLM fails
       console.warn(`LLM extraction failed, falling back to basic: ${e}`);
-      extracted = extractDiaryBasic(sanitizedContent);
+      rawExtracted = extractDiaryBasic(sanitizedContent);
     }
   } else {
-    extracted = extractDiaryBasic(sanitizedContent);
+    rawExtracted = extractDiaryBasic(sanitizedContent);
   }
+
+  // Normalize arrays to ensure they're never undefined
+  const extracted = {
+    status: rawExtracted.status ?? "mixed",
+    tags: rawExtracted.tags ?? [],
+    accomplishments: rawExtracted.accomplishments ?? [],
+    decisions: rawExtracted.decisions ?? [],
+    challenges: rawExtracted.challenges ?? [],
+    preferences: rawExtracted.preferences ?? [],
+    keyLearnings: rawExtracted.keyLearnings ?? [],
+    searchAnchors: rawExtracted.searchAnchors ?? []
+  };
 
   const related = await enrichWithRelatedSessions(sanitizedContent, config);
   
