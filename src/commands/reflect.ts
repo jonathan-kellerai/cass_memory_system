@@ -46,16 +46,26 @@ export async function reflectCommand(
         const initialPlaybook = await loadMergedPlaybook(config);
 
         let sessions: string[] = [];
-        if (options.session) {
-            sessions = [options.session];
-        } else {
-            log("Searching for new sessions...", !options.json);
-            sessions = await findUnprocessedSessions(processedLog.getProcessedPaths(), { 
-                days: options.days || config.sessionLookbackDays,
-                maxSessions: options.maxSessions || 5,
-                agent: options.agent
-            }, config.cassPath);
-        }
+    if (options.session) {
+      sessions = [options.session];
+    } else {
+      log("Searching for new sessions...", !options.json);
+      try {
+        sessions = await findUnprocessedSessions(
+          processedLog.getProcessedPaths(),
+          {
+            days: options.days || config.sessionLookbackDays,
+            maxSessions: options.maxSessions || 5,
+            agent: options.agent
+          },
+          config.cassPath
+        );
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        error(`Failed to locate sessions. ${msg.includes("ENOENT") ? "Ensure cass is installed and CASS_PATH is set." : msg}`);
+        return;
+      }
+    }
 
         const unprocessed = sessions.filter(s => !processedLog.has(s));
 

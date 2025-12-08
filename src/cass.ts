@@ -297,6 +297,9 @@ export async function cassExport(
     const activeConfig = config || await loadConfig();
     return sanitizeWithConfig(stdout, activeConfig);
   } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      warn(`cass binary not found at ${cassPath}. Set CASS_PATH or install cass. Falling back to direct parse.`);
+    }
     const fallback = await handleSessionExportFailure(sessionPath, err, config);
     if (fallback !== null) return fallback;
 
