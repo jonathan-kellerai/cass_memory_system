@@ -1,9 +1,9 @@
-import { loadConfig, DEFAULT_CONFIG, saveConfig } from "../config.js";
+import { loadConfig, DEFAULT_CONFIG } from "../config.js";
 import { cassAvailable, cassStats, cassSearch, safeCassSearch } from "../cass.js";
 import { fileExists, resolveRepoDir, resolveGlobalDir, expandPath, checkAbort } from "../utils.js";
 import { isLLMAvailable, getAvailableProviders, validateApiKey } from "../llm.js";
 import { SECRET_PATTERNS, compileExtraPatterns } from "../sanitize.js";
-import { loadPlaybook, savePlaybook } from "../playbook.js";
+import { loadPlaybook, savePlaybook, createEmptyPlaybook } from "../playbook.js";
 import { Config, Playbook } from "../types.js";
 import chalk from "chalk";
 import path from "node:path";
@@ -368,11 +368,8 @@ function createMissingPlaybookFix(playbookPath: string): FixableIssue {
     severity: "warn",
     safety: "safe",
     fix: async () => {
-      const emptyPlaybook: Playbook = {
-        bullets: [],
-        schema_version: 1,
-      };
-      await savePlaybook(playbookPath, emptyPlaybook);
+      const emptyPlaybook: Playbook = createEmptyPlaybook();
+      await savePlaybook(emptyPlaybook, playbookPath);
     },
   };
 }
@@ -435,7 +432,8 @@ function createResetConfigFix(configPath: string): FixableIssue {
         console.log(chalk.yellow(`  Backed up old config to: ${backupPath}`));
       }
       // Save default config
-      await saveConfig(configPath, DEFAULT_CONFIG);
+      await fs.mkdir(path.dirname(expandPath(configPath)), { recursive: true });
+      await fs.writeFile(expandPath(configPath), JSON.stringify(DEFAULT_CONFIG, null, 2));
     },
   };
 }
