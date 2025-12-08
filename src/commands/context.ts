@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { loadConfig } from "../config.js";
 import { loadMergedPlaybook, getActiveBullets } from "../playbook.js";
 import { safeCassSearch } from "../cass.js";
@@ -9,7 +11,8 @@ import {
   warn,
   truncate,
   formatLastHelpful,
-  extractBulletReasoning
+  extractBulletReasoning,
+  ensureDir
 } from "../utils.js";
 import { getEffectiveScore } from "../scoring.js";
 import { ContextResult, ScoredBullet, Config, CassSearchHit } from "../types.js";
@@ -72,6 +75,8 @@ export interface ContextFlags {
   days?: number;
   workspace?: string;
   format?: "json" | "markdown";
+  logContext?: boolean;
+  session?: string;
 }
 
 export interface ContextComputation {
@@ -157,7 +162,52 @@ export async function generateContextResult(
     config
   );
 
+  const shouldLog =
+    flags.logContext ||
+    process.env.CASS_CONTEXT_LOG === "1" ||
+    process.env.CASS_CONTEXT_LOG === "true";
+
+  if (shouldLog) {
+    await appendContextLog({
+      task,
+      ruleIds: rules.map((r) => r.id),
+      antiPatternIds: antiPatterns.map((r) => r.id),
+      workspace: flags.workspace,
+      session: flags.session,
+    });
+  }
+
   return { result, rules, antiPatterns, cassHits, warnings, suggestedQueries };
+}
+
+async function appendContextLog(entry: {
+  task: string;
+  ruleIds: string[];
+  antiPatternIds: string[];
+  workspace?: string;
+  session?: string;
+}) {
+  try {
+    const repoLog = path.resolve(".cass", "context-log.jsonl");
+    const repoDirExists = await fs
+      .access(path.dirname(repoLog))
+      .then(() => true)
+      .catch(() => false);
+
+    const logPath = repoDirExists
+      ? repoLog
+      : path.resolve(process.env.HOME || "~", ".cass-memory", "context-log.jsonl");
+
+    await ensureDir(path.dirname(logPath));
+    const payload = {
+      ...entry,
+      timestamp: new Date().toISOString(),
+      source: "context",
+    };
+    await fs.appendFile(logPath, JSON.stringify(payload) + "\n", "utf-8");
+  } catch {
+    // Best-effort logging; never block context generation
+  }
 }
 
 /**

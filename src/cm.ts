@@ -41,6 +41,8 @@ program.command("context")
   .option("--history <n>", "Number of history snippets", toInt)
   .option("--days <n>", "Lookback days for history", toInt)
   .option("--format <markdown|json>", "Force output format (overrides --json)")
+  .option("--log-context", "Log context usage for implicit feedback")
+  .option("--session <id>", "Optional session id to log with context")
   .action(async (task: string, opts: any) => await contextCommand(task, opts));
 
 // --- Mark ---
@@ -84,6 +86,20 @@ playbook.command("get")
   .argument("<id>", "Rule ID")
   .option("--json", "Output JSON")
   .action(async (id: string, opts: any) => await playbookCommand("get", [id], opts));
+
+playbook.command("export")
+  .description("Export playbook for sharing")
+  .option("--json", "Output as JSON (default: YAML)")
+  .option("--yaml", "Output as YAML")
+  .option("--all", "Include deprecated bullets")
+  .action(async (opts: any) => await playbookCommand("export", [], opts));
+
+playbook.command("import")
+  .description("Import playbook from file")
+  .argument("<file>", "Path to playbook file (YAML or JSON)")
+  .option("--replace", "Replace existing bullets with same ID")
+  .option("--json", "Output JSON result")
+  .action(async (file: string, opts: any) => await playbookCommand("import", [file], opts));
 
 // --- Stats ---
 program.command("stats")
