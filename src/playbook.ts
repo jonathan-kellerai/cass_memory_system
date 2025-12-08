@@ -205,7 +205,6 @@ export async function loadPlaybookWithRecovery(
 export async function loadBlockedLog(logPath: string): Promise<ToxicEntry[]> {
   const expanded = expandPath(logPath);
   if (!(await fileExists(expanded))) {
-    // console.log(`[debug] Blocked log not found: ${expanded}`); // Debug log
     return [];
   }
 
@@ -228,7 +227,6 @@ export async function loadBlockedLog(logPath: string): Promise<ToxicEntry[]> {
         warn(`Skipping malformed line in blocked log: ${trimmed.slice(0, 50)}...`);
       }
     }
-    // console.log(`[debug] Loaded ${entries.length} entries from ${expanded}`); // Debug log
     return entries;
   } catch (err: any) {
     warn(`Failed to read blocked log ${expanded}: ${err.message}`);

@@ -4,7 +4,7 @@ import yaml from "yaml";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { Config, ConfigSchema, SanitizationConfig, BudgetConfig } from "./types.js";
-import { fileExists, warn, atomicWrite, expandPath } from "./utils.js";
+import { fileExists, warn, atomicWrite, expandPath, normalizeYamlKeys } from "./utils.js";
 
 const execAsync = promisify(exec);
 
@@ -100,7 +100,7 @@ async function loadConfigFile(filePath: string): Promise<Partial<Config>> {
     const ext = path.extname(expanded);
     
     if (ext === ".yaml" || ext === ".yml") {
-      return normalizeConfigKeys(yaml.parse(content));
+      return normalizeYamlKeys(yaml.parse(content));
     } else {
       return JSON.parse(content);
     }
@@ -108,19 +108,6 @@ async function loadConfigFile(filePath: string): Promise<Partial<Config>> {
     warn(`Failed to load config from ${expanded}: ${error.message}`);
     return {};
   }
-}
-
-function normalizeConfigKeys(obj: any): any {
-  if (Array.isArray(obj)) return obj.map(normalizeConfigKeys);
-  if (obj && typeof obj === "object") {
-    const newObj: any = {};
-    for (const key of Object.keys(obj)) {
-      const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-      newObj[camelKey] = normalizeConfigKeys(obj[key]);
-    }
-    return newObj;
-  }
-  return obj;
 }
 
 export async function loadConfig(cliOverrides: Partial<Config> = {}): Promise<Config> {

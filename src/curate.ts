@@ -448,7 +448,8 @@ export function curatePlaybook(
   const inversions: InversionReport[] = [];
   const invertedBulletIds = new Set<string>();
 
-  for (const bullet of targetPlaybook.bullets) {
+  // Iterate over a copy to safely mutate the array (adding anti-patterns) during iteration
+  for (const bullet of [...targetPlaybook.bullets]) {
     if (bullet.deprecated || bullet.pinned || bullet.kind === "anti_pattern") continue;
 
     const { decayedHarmful, decayedHelpful } = getDecayedCounts(bullet, config);
@@ -489,7 +490,8 @@ export function curatePlaybook(
   result.inversions = inversions;
 
   // 2. Promotions & Demotions (after inversion so we don't double-deprecate)
-  for (const bullet of targetPlaybook.bullets) {
+  // Iterate over a copy to avoid issues if we were to modify the array structure (though we currently don't remove)
+  for (const bullet of [...targetPlaybook.bullets]) {
     if (bullet.deprecated || invertedBulletIds.has(bullet.id)) continue;
 
     const oldMaturity = bullet.maturity;

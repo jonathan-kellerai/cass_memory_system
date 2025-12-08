@@ -161,12 +161,12 @@ export async function validateDelta(
   }
 
   const content = delta.bullet.content || "";
-  if (content.length < 20) {
+  if (content.length < 15) {
     decisionLog.push({
       timestamp: now(),
       phase: "add",
       action: "skipped",
-      reason: `Content too short (${content.length} chars < 20)`,
+      reason: `Content too short (${content.length} chars < 15)`,
       content: content.slice(0, 100)
     });
     return { valid: true, decisionLog };
