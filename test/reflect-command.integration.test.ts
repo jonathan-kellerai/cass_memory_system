@@ -3,6 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "yaml";
 
+import * as actualDiary from "../src/diary.js";
+import * as actualReflect from "../src/reflect.js";
+import * as actualValidate from "../src/validate.js";
+import * as actualCurate from "../src/curate.js";
+import * as actualCass from "../src/cass.js";
+
 import { createTestBullet } from "./helpers/factories.js";
 import { withTempCassHome, writeFileInDir } from "./helpers/temp.js";
 import { createEmptyPlaybook } from "../src/playbook.js";
@@ -26,12 +32,11 @@ const mockDiary = {
   relatedSessions: [],
 };
 
-const mockDelta = {
-  type: "add",
-  bullet: { content: "Integration rule", category: "testing", scope: "global", kind: "workflow_rule" },
-  reason: "integration test",
-  sourceSession: "SESSION",
-};
+const mockDelta =           {
+            type: "add",
+            bullet: { content: "Reflect Rule", category: "testing" },
+            reason: "stubbed reflection"
+          };
 
 const curatedPlaybook = createEmptyPlaybook("integration");
 curatedPlaybook.bullets = [createTestBullet({ content: mockDelta.bullet.content, category: mockDelta.bullet.category })];
@@ -41,10 +46,16 @@ describe("reflectCommand integration", () => {
 
   afterEach(() => {
     process.chdir(originalCwd);
+    // Restore real modules so later tests see actual implementations
+    mock.module("../src/diary.js", () => actualDiary);
+    mock.module("../src/reflect.js", () => actualReflect);
+    mock.module("../src/validate.js", () => actualValidate);
+    mock.module("../src/curate.js", () => actualCurate);
+    mock.module("../src/cass.js", () => actualCass);
     mock.restore();
   });
 
-  it("processes a provided session, writes playbook, and records processed log", async () => {
+  it.serial("processes a provided session, writes playbook, and records processed log", async () => {
     await withTempCassHome(async (env) => {
       process.chdir(env.home);
 
@@ -106,7 +117,7 @@ describe("reflectCommand integration", () => {
       // Verify playbook was updated with curated bullet
       const saved = yaml.parse(await fs.readFile(env.playbookPath, "utf-8"));
       const contents = (saved.bullets || []).map((b: any) => b.content);
-      expect(contents).toContain("Integration rule");
+      expect(contents).toContain("Reflect Rule");
 
       // Verify processed log captured the session
       const logPath = getProcessedLogPath();
@@ -114,4 +125,8 @@ describe("reflectCommand integration", () => {
       expect(logContent).toContain(sessionPath);
     });
   });
+});
+
+afterAll(() => {
+  mock.restore();
 });

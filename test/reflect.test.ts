@@ -1,4 +1,6 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterAll } from "bun:test";
+import * as actualLLM from "../src/llm.js";
+import * as actualCass from "../src/cass.js";
 import { reflectOnSession, deduplicateDeltas } from "../src/reflect.js"; // Internal export for testing
 import { createTestConfig, createTestDiary, createTestPlaybook, createTestBullet } from "./helpers/factories.js";
 import { PlaybookDelta } from "../src/types.js";
@@ -6,14 +8,23 @@ import { PlaybookDelta } from "../src/types.js";
 // Mock llm module to avoid real API calls
 const mockRunReflector = mock();
 mock.module("../src/llm.js", () => ({
+  ...actualLLM,
   runReflector: mockRunReflector
 }));
 
 // Mock cass module
 const mockSafeCassSearch = mock();
 mock.module("../src/cass.js", () => ({
+  ...actualCass,
   safeCassSearch: mockSafeCassSearch
 }));
+
+afterAll(() => {
+  // Reset module mocks so later files see real implementations
+  mock.module("../src/llm.js", () => actualLLM);
+  mock.module("../src/cass.js", () => actualCass);
+  mock.restore();
+});
 
 describe("reflectOnSession", () => {
   const config = createTestConfig();
@@ -23,7 +34,7 @@ describe("reflectOnSession", () => {
     mockSafeCassSearch.mockClear();
   });
   
-  test("should terminate when no new insights found", async () => {
+  test.serial("should terminate when no new insights found", async () => {
     const diary = createTestDiary();
     const playbook = createTestPlaybook();
     
@@ -37,7 +48,7 @@ describe("reflectOnSession", () => {
     expect(mockRunReflector).toHaveBeenCalledTimes(1); // Should stop after 1
   });
 
-  test("should aggregate unique deltas across iterations", async () => {
+  test.serial("should aggregate unique deltas across iterations", async () => {
     const diary = createTestDiary();
     const playbook = createTestPlaybook();
     
@@ -73,7 +84,7 @@ describe("reflectOnSession", () => {
     expect(deltas.map(d => d.type === 'add' ? d.bullet.content : '')).toContain("Rule B");
   });
 
-  test("should stop if max iterations reached", async () => {
+  test.serial("should stop if max iterations reached", async () => {
     mockRunReflector.mockClear();
     const diary = createTestDiary();
     const playbook = createTestPlaybook();
@@ -96,7 +107,7 @@ describe("reflectOnSession", () => {
 });
 
 describe("deduplicateDeltas", () => {
-  test("should filter exact duplicates", () => {
+  test.serial("should filter exact duplicates", () => {
     const delta: PlaybookDelta = {
       type: "add",
       bullet: { content: "content", category: "cat" },
@@ -111,7 +122,7 @@ describe("deduplicateDeltas", () => {
     expect(result).toHaveLength(0);
   });
 
-  test("should filter duplicates by content hash for adds", () => {
+  test.serial("should filter duplicates by content hash for adds", () => {
     const d1: PlaybookDelta = {
       type: "add",
       bullet: { content: "Same Content", category: "cat1" },
@@ -130,7 +141,7 @@ describe("deduplicateDeltas", () => {
     expect(result).toHaveLength(0); // Should match case-insensitive
   });
 
-  test("should allow distinct adds", () => {
+  test.serial("should allow distinct adds", () => {
     const d1: PlaybookDelta = {
       type: "add",
       bullet: { content: "A", category: "c" },
