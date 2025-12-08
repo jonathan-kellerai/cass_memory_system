@@ -37,8 +37,11 @@ grep '"total": 0' "$RUN_DIR/stats-empty.out"
 RULE_CONTENT="Always write atomically"
 run_step playbook-add bun run "$CM_BIN" playbook add "$RULE_CONTENT" --category io --json
 run_step playbook-list bun run "$CM_BIN" playbook list --json
-BULLET_ID=$(grep '"id":' "$RUN_DIR/playbook-list.out" | head -1 | cut -d'"' -f4)
-test -n "$BULLET_ID"
+BULLET_ID=$(bun -e 'const fs=require("fs");const data=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(Array.isArray(data)&&data[0]?.id||"");' "$RUN_DIR/playbook-list.out")
+if [ -z "$BULLET_ID" ]; then
+  echo "Failed to extract bullet id from playbook list"
+  exit 1
+fi
 
 # 4) mark helpful
 run_step mark-helpful bun run "$CM_BIN" mark "$BULLET_ID" --helpful --session "e2e-session" --json

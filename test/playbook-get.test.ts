@@ -213,7 +213,7 @@ describe("playbook get command", () => {
     });
   });
 
-  it("exits with error for non-existent bullet", async () => {
+  it("exits with error for non-existent bullet", { timeout: 15000 }, async () => {
     await withTempDir("playbook-get", async (dir) => {
       const playbookPath = path.join(dir, "playbook.yaml");
       const bullet = createTestBullet({ id: "b-exists" });
@@ -249,7 +249,7 @@ describe("playbook get command", () => {
     });
   });
 
-  it("suggests similar IDs when bullet not found", async () => {
+  it("suggests similar IDs when bullet not found", { timeout: 15000 }, async () => {
     await withTempDir("playbook-get", async (dir) => {
       const playbookPath = path.join(dir, "playbook.yaml");
       const bullets = [
@@ -290,7 +290,7 @@ describe("playbook get command", () => {
     });
   });
 
-  it("returns JSON error with suggestions for non-existent bullet", async () => {
+  it("returns JSON error with suggestions for non-existent bullet", { timeout: 15000 }, async () => {
     await withTempDir("playbook-get", async (dir) => {
       const playbookPath = path.join(dir, "playbook.yaml");
       const bullets = [

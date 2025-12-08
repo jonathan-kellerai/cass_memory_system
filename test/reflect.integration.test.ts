@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { reflectOnSession } from "../src/reflect.js";
@@ -9,6 +9,8 @@ import { __resetReflectorStubsForTest } from "../src/llm.js";
 const fixturePath = path.join(process.cwd(), "test/fixtures/diary-success.json");
 
 describe("Reflector pipeline (integration, stubbed LLM)", () => {
+  mock.restore();
+
   beforeEach(() => {
     __resetReflectorStubsForTest();
   });
@@ -67,4 +69,3 @@ describe("Reflector pipeline (integration, stubbed LLM)", () => {
     expect(contents).toContain("Rule B");
   });
 });
-

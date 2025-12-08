@@ -68,7 +68,14 @@ mock.module("../src/curate.js", () => ({
 // Avoid cass dependency in this integration path
 mock.module("../src/cass.js", () => ({
   findUnprocessedSessions: async () => [],
-  cassExport: async () => null,
+  cassExport: async () => "this is synthetic session content that is definitely more than fifty characters long",
+  cassExpand: async () => "expanded context",
+  cassTimeline: async () => ({ groups: [] }),
+  cassAvailable: () => true,
+  cassSearch: async () => [],
+  cassStats: async () => null,
+  cassIndex: async () => undefined,
+  safeCassSearch: async () => [],
 }));
 
 describe("reflectCommand integration", () => {
