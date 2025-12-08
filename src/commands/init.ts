@@ -1,11 +1,14 @@
-import { getDefaultConfig, saveConfig } from "../config.js";
-import { createEmptyPlaybook, savePlaybook } from "../playbook.js";
-import { expandPath, fileExists, ensureDir, warn, log, resolveRepoDir, ensureRepoStructure, ensureGlobalStructure } from "../utils.js";
+import { getDefaultConfig } from "../config.js";
+import { createEmptyPlaybook, loadPlaybook, savePlaybook } from "../playbook.js";
+import { expandPath, fileExists, warn, log, resolveRepoDir, ensureRepoStructure, ensureGlobalStructure } from "../utils.js";
 import { cassAvailable } from "../cass.js";
+import { applyStarter, loadStarter } from "../starters.js";
 import chalk from "chalk";
 import yaml from "yaml";
 
-export async function initCommand(options: { force?: boolean; json?: boolean; repo?: boolean }) {
+type InitOptions = { force?: boolean; json?: boolean; repo?: boolean; starter?: string };
+
+export async function initCommand(options: InitOptions) {
   // If --repo flag is provided, initialize repo-level .cass/ structure
   if (options.repo) {
     await initRepoCommand(options);
@@ -14,11 +17,12 @@ export async function initCommand(options: { force?: boolean; json?: boolean; re
 
   const config = getDefaultConfig();
   const configPath = expandPath("~/.cass-memory/config.json");
+  const playbookPath = expandPath("~/.cass-memory/playbook.yaml");
   const playbook = createEmptyPlaybook();
   
   const alreadyInitialized = await fileExists(configPath);
 
-  if (alreadyInitialized && !options.force) {
+  if (alreadyInitialized && !options.force && !options.starter) {
     if (options.json) {
       console.log(JSON.stringify({
         success: false,
@@ -36,6 +40,23 @@ export async function initCommand(options: { force?: boolean; json?: boolean; re
     yaml.stringify(playbook)
   );
 
+  let starterOutcome: { added: number; skipped: number; name: string } | null = null;
+  if (options.starter) {
+    try {
+      starterOutcome = await seedStarter(playbookPath, options.starter);
+    } catch (err: any) {
+      if (options.json) {
+        console.log(JSON.stringify({
+          success: false,
+          error: err?.message || "Failed to apply starter"
+        }));
+      } else {
+        console.error(chalk.red(err?.message || "Failed to apply starter"));
+      }
+      return;
+    }
+  }
+
   // 4. Check cass
   const cassOk = cassAvailable(config.cassPath);
   if (!cassOk && !options.json) {
@@ -50,7 +71,8 @@ export async function initCommand(options: { force?: boolean; json?: boolean; re
       configPath,
       created: result.created,
       existed: result.existed,
-      cassAvailable: cassOk
+      cassAvailable: cassOk,
+      starter: starterOutcome
     }, null, 2));
   } else {
     if (result.created.length > 0) {
@@ -69,6 +91,9 @@ export async function initCommand(options: { force?: boolean; json?: boolean; re
     console.log(chalk.green(`✓ Verified directories: ${diaryDir} etc.`));
 
     console.log(`✓ cass available: ${cassOk ? chalk.green("yes") : chalk.red("no")}`);
+    if (starterOutcome) {
+      console.log(chalk.green(`✓ Applied starter "${starterOutcome.name}" (${starterOutcome.added} added, ${starterOutcome.skipped} skipped)`));
+    }
     console.log("");
     console.log(chalk.bold("cass-memory initialized successfully!"));
     console.log("");
@@ -79,11 +104,27 @@ export async function initCommand(options: { force?: boolean; json?: boolean; re
   }
 }
 
+async function seedStarter(
+  playbookPath: string,
+  starterName: string
+): Promise<{ added: number; skipped: number; name: string }> {
+  const starter = await loadStarter(starterName);
+  if (!starter) {
+    throw new Error(`Starter "${starterName}" not found. Run "cm starters" to list available names.`);
+  }
+
+  const playbook = await loadPlaybook(playbookPath);
+  const { added, skipped } = applyStarter(playbook, starter, { preferExisting: true });
+  await savePlaybook(playbook, playbookPath);
+
+  return { added, skipped, name: starterName };
+}
+
 /**
  * Initialize repo-level .cass/ directory structure.
  * Creates project-specific playbook and blocked.log for team sharing.
  */
-async function initRepoCommand(options: { force?: boolean; json?: boolean }) {
+async function initRepoCommand(options: InitOptions) {
   const cassDir = await resolveRepoDir();
 
   if (!cassDir) {
@@ -103,7 +144,7 @@ async function initRepoCommand(options: { force?: boolean; json?: boolean }) {
   const playbookPath = `${cassDir}/playbook.yaml`;
   const alreadyInitialized = await fileExists(playbookPath);
 
-  if (alreadyInitialized && !options.force) {
+  if (alreadyInitialized && !options.force && !options.starter) {
     if (options.json) {
       console.log(JSON.stringify({
         success: false,
@@ -118,12 +159,30 @@ async function initRepoCommand(options: { force?: boolean; json?: boolean }) {
   // Create the structure
   const result = await ensureRepoStructure(cassDir);
 
+  let starterOutcome: { added: number; skipped: number; name: string } | null = null;
+  if (options.starter) {
+    try {
+      starterOutcome = await seedStarter(playbookPath, options.starter);
+    } catch (err: any) {
+      if (options.json) {
+        console.log(JSON.stringify({
+          success: false,
+          error: err?.message || "Failed to apply starter"
+        }));
+      } else {
+        console.error(chalk.red(err?.message || "Failed to apply starter"));
+      }
+      return;
+    }
+  }
+
   if (options.json) {
     console.log(JSON.stringify({
       success: true,
       cassDir,
       created: result.created,
-      existed: result.existed
+      existed: result.existed,
+      starter: starterOutcome
     }, null, 2));
   } else {
     console.log(chalk.bold("\n🏗️  Initializing repo-level .cass/ structure\n"));
@@ -138,6 +197,10 @@ async function initRepoCommand(options: { force?: boolean; json?: boolean }) {
       for (const file of result.existed) {
         console.log(chalk.blue(`• .cass/${file} already exists`));
       }
+    }
+
+    if (starterOutcome) {
+      console.log(chalk.green(`✓ Applied starter "${starterOutcome.name}" (${starterOutcome.added} added, ${starterOutcome.skipped} skipped)`));
     }
 
     console.log("");

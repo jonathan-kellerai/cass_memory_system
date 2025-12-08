@@ -14,6 +14,7 @@ import { projectCommand } from "./commands/project.js";
 import { serveCommand } from "./commands/serve.js";
 import { outcomeCommand, applyOutcomeLogCommand } from "./commands/outcome.js";
 import { usageCommand } from "./commands/usage.js";
+import { startersCommand } from "./commands/starters.js";
 
 const program = new Command();
 const toInt = (value: string) => parseInt(value, 10);
@@ -29,6 +30,7 @@ program.command("init")
   .option("-f, --force", "Overwrite existing config")
   .option("--repo", "Initialize repo-level .cass/ directory structure")
   .option("--json", "Output JSON")
+  .option("--starter <name>", "Seed the playbook with a starter rule set")
   .action(async (opts: any) => await initCommand(opts));
 
 // --- Context ---
@@ -164,6 +166,12 @@ program.command("project")
   .option("--top <n>", "Limit rules per category", toInt)
   .option("--show-counts", "Include helpful counts", true)
   .action(async (opts: any) => await projectCommand(opts));
+
+// --- Starters ---
+program.command("starters")
+  .description("List available starter playbooks")
+  .option("--json", "Output JSON")
+  .action(async (opts: any) => await startersCommand(opts));
 
 // --- Serve (HTTP-only MCP surface) ---
 program.command("serve")
