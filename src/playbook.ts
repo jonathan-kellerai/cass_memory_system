@@ -246,6 +246,52 @@ export async function appendBlockedLog(entry: BlockedEntry, logPath: string): Pr
 /** @deprecated Use appendBlockedLog instead */
 export const appendToxicLog = appendBlockedLog;
 
+/**
+ * Remove an entry from the blocked log by bullet ID.
+ * This is needed when un-deprecating a bullet that was forgotten.
+ */
+export async function removeFromBlockedLog(bulletId: string, logPath: string): Promise<boolean> {
+  const expanded = expandPath(logPath);
+  if (!(await fileExists(expanded))) {
+    return false;
+  }
+
+  try {
+    const content = await fs.readFile(expanded, "utf-8");
+    const lines = content.split("\n");
+    const filteredLines: string[] = [];
+    let found = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      try {
+        const entry = JSON.parse(trimmed);
+        if (entry.id === bulletId) {
+          found = true;
+          continue; // Skip this entry
+        }
+        filteredLines.push(trimmed);
+      } catch {
+        // Keep malformed lines to not lose data
+        filteredLines.push(trimmed);
+      }
+    }
+
+    if (found) {
+      // Write back the filtered entries
+      const newContent = filteredLines.length > 0 ? filteredLines.join("\n") + "\n" : "";
+      await fs.writeFile(expanded, newContent, "utf-8");
+    }
+
+    return found;
+  } catch (err: any) {
+    warn(`Failed to remove from blocked log ${expanded}: ${err.message}`);
+    return false;
+  }
+}
+
 async function isBlockedContent(content: string, blockedLog: BlockedEntry[]): Promise<boolean> {
   const hash = hashContent(content);
 

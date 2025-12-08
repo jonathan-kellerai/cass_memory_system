@@ -7,7 +7,7 @@
  * - Remove a bullet entirely (hard delete)
  */
 import { loadConfig } from "../config.js";
-import { loadPlaybook, savePlaybook, findBullet } from "../playbook.js";
+import { loadPlaybook, savePlaybook, findBullet, removeFromBlockedLog } from "../playbook.js";
 import { PlaybookBullet, Config, FeedbackEvent } from "../types.js";
 import { now, expandPath } from "../utils.js";
 import chalk from "chalk";
@@ -231,6 +231,11 @@ export async function undoCommand(
     }
 
     const before = undeprecateBullet(bullet);
+
+    // Also remove from blocklist(s) so it doesn't get re-blocked on next load
+    await removeFromBlockedLog(bulletId, "~/.cass-memory/blocked.log");
+    await removeFromBlockedLog(bulletId, path.resolve(process.cwd(), ".cass", "blocked.log"));
+
     await savePlaybook(playbook, playbookPath);
 
     result = {
