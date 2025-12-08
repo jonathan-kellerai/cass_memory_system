@@ -25,7 +25,7 @@ export class ProcessedLog {
             sessionPath,
             processedAt,
             diaryId: id,
-            deltasGenerated: parseInt(deltasProposed || "0")
+            deltasGenerated: parseInt(deltasProposed || "0", 10)
           });
         }
       }
