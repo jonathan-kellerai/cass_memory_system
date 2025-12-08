@@ -58,7 +58,9 @@ export async function recordCost(
   // Security: Do not log the full context (prompt) to disk as it may contain secrets
   const { context, ...logEntry } = fullEntry;
   
-  await fs.appendFile(logPath, JSON.stringify(logEntry) + "\n");
+  await withLock(logPath, async () => {
+    await fs.appendFile(logPath, JSON.stringify(logEntry) + "\n");
+  });
   
   // Update total
   await updateTotalCost(costDir, cost);
