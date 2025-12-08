@@ -13,8 +13,6 @@ export const HarmfulReasonEnum = z.enum([
   "other"
 ]);
 export type HarmfulReason = z.infer<typeof HarmfulReasonEnum>;
-// Export alias for backward compatibility
-export const HarmfulReasonSchema = HarmfulReasonEnum;
 
 export const SessionStatusEnum = z.enum(["success", "failure", "mixed"]);
 export type SessionStatus = z.infer<typeof SessionStatusEnum>;
@@ -102,9 +100,16 @@ export type PlaybookBullet = z.infer<typeof PlaybookBulletSchema>;
 // NEW BULLET DATA
 // ============================================================================
 
-export const NewBulletDataSchema = PlaybookBulletSchema.partial().extend({
+export const NewBulletDataSchema = z.object({
+  category: z.string(),
   content: z.string(),
-  category: z.string()
+  tags: z.array(z.string()).optional().default([]),
+  searchPointer: z.string().optional(),
+  scope: BulletScopeEnum.optional().default("global"),
+  workspace: z.string().optional(),
+  kind: BulletKindEnum.optional().default("stack_pattern"),
+  type: BulletTypeEnum.optional().default("rule"),
+  isNegative: z.boolean().optional().default(false)
 });
 export type NewBulletData = z.infer<typeof NewBulletDataSchema>;
 
@@ -112,56 +117,44 @@ export type NewBulletData = z.infer<typeof NewBulletDataSchema>;
 // PLAYBOOK DELTA
 // ============================================================================
 
-export const AddDeltaSchema = z.object({
-  type: z.literal("add"),
-  bullet: NewBulletDataSchema,
-  reason: z.string(),
-  sourceSession: z.string()
-});
-
-export const HelpfulDeltaSchema = z.object({
-  type: z.literal("helpful"),
-  bulletId: z.string(),
-  sourceSession: z.string().optional(),
-  context: z.string().optional() // Ensure optional
-});
-
-export const HarmfulDeltaSchema = z.object({
-  type: z.literal("harmful"),
-  bulletId: z.string(),
-  sourceSession: z.string().optional(),
-  reason: HarmfulReasonEnum.optional(),
-  context: z.string().optional()
-});
-
-export const ReplaceDeltaSchema = z.object({
-  type: z.literal("replace"),
-  bulletId: z.string(),
-  newContent: z.string(),
-  reason: z.string().optional()
-});
-
-export const DeprecateDeltaSchema = z.object({
-  type: z.literal("deprecate"),
-  bulletId: z.string(),
-  reason: z.string(),
-  replacedBy: z.string().optional()
-});
-
-export const MergeDeltaSchema = z.object({
-  type: z.literal("merge"),
-  bulletIds: z.array(z.string()),
-  mergedContent: z.string(),
-  reason: z.string().optional()
-});
-
 export const PlaybookDeltaSchema = z.discriminatedUnion("type", [
-  AddDeltaSchema,
-  HelpfulDeltaSchema,
-  HarmfulDeltaSchema,
-  ReplaceDeltaSchema,
-  DeprecateDeltaSchema,
-  MergeDeltaSchema,
+  z.object({
+    type: z.literal("add"),
+    bullet: NewBulletDataSchema,
+    reason: z.string(),
+    sourceSession: z.string()
+  }),
+  z.object({
+    type: z.literal("helpful"),
+    bulletId: z.string(),
+    sourceSession: z.string().optional(),
+    context: z.string().optional()
+  }),
+  z.object({
+    type: z.literal("harmful"),
+    bulletId: z.string(),
+    sourceSession: z.string().optional(),
+    reason: HarmfulReasonEnum.optional(),
+    context: z.string().optional()
+  }),
+  z.object({
+    type: z.literal("replace"),
+    bulletId: z.string(),
+    newContent: z.string(),
+    reason: z.string()
+  }),
+  z.object({
+    type: z.literal("deprecate"),
+    bulletId: z.string(),
+    reason: z.string(),
+    replacedBy: z.string().optional()
+  }),
+  z.object({
+    type: z.literal("merge"),
+    bulletIds: z.array(z.string()),
+    mergedContent: z.string(),
+    reason: z.string()
+  })
 ]);
 export type PlaybookDelta = z.infer<typeof PlaybookDeltaSchema>;
 
@@ -240,7 +233,9 @@ export type DiaryEntry = z.infer<typeof DiaryEntrySchema>;
 
 export const SanitizationConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  extraPatterns: z.array(z.string()).default([])
+  extraPatterns: z.array(z.string()).default([]),
+  auditLog: z.boolean().optional().default(false),
+  auditLevel: z.enum(["debug", "info", "warn", "error"]).default("info")
 });
 export type SanitizationConfig = z.infer<typeof SanitizationConfigSchema>;
 
@@ -255,40 +250,32 @@ export type ScoringConfigSection = z.infer<typeof ScoringConfigSectionSchema>;
 
 export const ConfigSchema = z.object({
   schema_version: z.number().default(1),
-  // Nested LLM config
   llm: z.object({
     provider: z.string().default("anthropic"),
     model: z.string().default("claude-sonnet-4-20250514")
   }).optional(),
-  // Flat config (backwards compatibility)
   provider: LLMProviderEnum.default("anthropic"),
   model: z.string().default("claude-sonnet-4-20250514"),
-  // Paths
   cassPath: z.string().default("cass"),
   playbookPath: z.string().default("~/.cass-memory/playbook.yaml"),
   diaryDir: z.string().default("~/.cass-memory/diary"),
   diaryPath: z.string().optional(),
   scoring: ScoringConfigSectionSchema.default({}),
-  // Reflector settings
   maxReflectorIterations: z.number().default(3),
   autoReflect: z.boolean().default(false),
-  // Thresholds
   dedupSimilarityThreshold: z.number().default(0.85),
   pruneHarmfulThreshold: z.number().default(3),
   defaultDecayHalfLife: z.number().default(90),
-  // Context limits
   maxBulletsInContext: z.number().default(50),
   maxHistoryInContext: z.number().default(10),
   sessionLookbackDays: z.number().default(7),
   validationLookbackDays: z.number().default(90),
-  // Flags
   validationEnabled: z.boolean().default(true),
   enrichWithCrossAgent: z.boolean().default(true),
   semanticSearchEnabled: z.boolean().default(false),
   verbose: z.boolean().default(false),
   jsonOutput: z.boolean().default(false),
-  // Sanitization
-  sanitization: SanitizationConfigSchema.default({}) // Use schema directly
+  sanitization: SanitizationConfigSchema.default({})
 });
 export type Config = z.infer<typeof ConfigSchema>;
 
@@ -312,7 +299,6 @@ export const CassSearchHitSchema = z.object({
 }));
 export type CassSearchHit = z.infer<typeof CassSearchHitSchema>;
 
-// Aliases
 export const CassHitSchema = CassSearchHitSchema;
 export type CassHit = CassSearchHit;
 
@@ -349,8 +335,7 @@ export const ContextResultSchema = z.object({
   antiPatterns: z.array(ScoredBulletSchema),
   historySnippets: z.array(CassSearchHitSchema),
   deprecatedWarnings: z.array(z.string()),
-  suggestedCassQueries: z.array(z.string()),
-  formattedPrompt: z.string().optional(), // Raw text for agent
+  suggestedCassQueries: z.array(z.string())
 });
 export type ContextResult = z.infer<typeof ContextResultSchema>;
 
@@ -379,15 +364,14 @@ export type ValidationEvidence = z.infer<typeof ValidationEvidenceSchema>;
 export const ValidationResultSchema = z.object({
   delta: PlaybookDeltaSchema.optional(),
   valid: z.boolean(),
-  verdict: z.enum(["ACCEPT", "REJECT", "ACCEPT_WITH_CAUTION"]),
+  verdict: z.enum(["ACCEPT", "REJECT", "REFINE"]),
   confidence: z.number().min(0).max(1),
   reason: z.string(),
-  evidence: z.array(z.string()), // Citations
+  evidence: z.array(ValidationEvidenceSchema), // Use object schema
   refinedRule: z.string().optional(),
-  // Compatibility fields
   approved: z.boolean().optional(),
-  supportingEvidence: z.array(ValidationEvidenceSchema).default([]),
-  contradictingEvidence: z.array(ValidationEvidenceSchema).default([])
+  supportingEvidence: z.array(ValidationEvidenceSchema).optional(),
+  contradictingEvidence: z.array(ValidationEvidenceSchema).optional()
 });
 export type ValidationResult = z.infer<typeof ValidationResultSchema>;
 
@@ -429,6 +413,7 @@ export const InversionReportSchema = z.object({
   antiPatternId: z.string(),
   antiPatternContent: z.string(),
   bulletId: z.string().optional(),
+  reason: z.string()
 });
 export type InversionReport = z.infer<typeof InversionReportSchema>;
 

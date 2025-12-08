@@ -39,7 +39,9 @@ export const DEFAULT_CONFIG: Config = {
   jsonOutput: false,
   sanitization: {
     enabled: true,
-    extraPatterns: []
+    extraPatterns: [] as string[],
+    auditLog: false,
+    auditLevel: "info" as const,
   },
 };
 
