@@ -16,7 +16,8 @@ import {
   jaccardSimilarity, 
   generateBulletId, 
   now,
-  log 
+  log,
+  tokenize
 } from "./utils.js";
 import { 
   checkForPromotion, 
@@ -48,6 +49,72 @@ function findSimilarBullet(
     }
   }
   return undefined;
+}
+
+// --- Helper: Conflict Detection ---
+
+const NEGATIVE_MARKERS = ["never", "dont", "don't", "avoid", "forbid", "forbidden", "disable", "prevent", "stop", "skip"];
+const POSITIVE_MARKERS = ["always", "must", "required", "ensure", "use", "enable"];
+const EXCEPTION_MARKERS = ["unless", "except", "only if", "only when", "except when"];
+
+function hasMarker(text: string, markers: string[]): boolean {
+  const lower = text.toLowerCase();
+  return markers.some(m => lower.includes(m));
+}
+
+export function detectConflicts(
+  newContent: string,
+  existingBullets: PlaybookBullet[]
+): { id: string; content: string; reason: string }[] {
+  const conflicts: { id: string; content: string; reason: string }[] = [];
+
+  for (const b of existingBullets) {
+    if (b.deprecated) continue;
+
+    const overlap = jaccardSimilarity(newContent, b.content);
+    const markerPresent = hasMarker(newContent, NEGATIVE_MARKERS) || hasMarker(b.content, NEGATIVE_MARKERS) ||
+      hasMarker(newContent, POSITIVE_MARKERS) || hasMarker(b.content, POSITIVE_MARKERS);
+    if (overlap < 0.25 && !markerPresent) continue;
+
+    const newNeg = hasMarker(newContent, NEGATIVE_MARKERS);
+    const oldNeg = hasMarker(b.content, NEGATIVE_MARKERS);
+    const newPos = hasMarker(newContent, POSITIVE_MARKERS);
+    const oldPos = hasMarker(b.content, POSITIVE_MARKERS);
+    const newExc = hasMarker(newContent, EXCEPTION_MARKERS);
+    const oldExc = hasMarker(b.content, EXCEPTION_MARKERS);
+
+    // Heuristic 1: Negation conflict (one negative, one affirmative)
+    if (overlap >= 0.2 && newNeg !== oldNeg) {
+      conflicts.push({
+        id: b.id,
+        content: b.content,
+        reason: "Possible negation conflict (one says do, the other says avoid) with high term overlap"
+      });
+      continue;
+    }
+
+    // Heuristic 2: Opposite sentiment (must vs avoid)
+    if (overlap >= 0.2 && ((newPos && oldNeg) || (oldPos && newNeg))) {
+      conflicts.push({
+        id: b.id,
+        content: b.content,
+        reason: "Opposite directives (must vs avoid) on similar subject matter"
+      });
+      continue;
+    }
+
+    // Heuristic 3: Scope conflict (always vs exception)
+    if (overlap >= 0.2 && ((newPos && oldExc) || (oldPos && newExc))) {
+      conflicts.push({
+        id: b.id,
+        content: b.content,
+        reason: "Potential scope conflict (always vs exception) on overlapping topic"
+      });
+      continue;
+    }
+  }
+
+  return conflicts;
 }
 
 // --- Helper: Anti-Pattern Inversion ---
@@ -117,7 +184,17 @@ export function curatePlaybook(
         
         const content = delta.bullet.content;
         const hash = hashContent(content);
-        
+        // Conflict detection (warnings only)
+        const conflicts = detectConflicts(content, referencePlaybook.bullets);
+        for (const c of conflicts) {
+          result.conflicts.push({
+            newBulletContent: content,
+            conflictingBulletId: c.id,
+            conflictingContent: c.content,
+            reason: c.reason
+          });
+        }
+
         // 1. Exact duplicate check (against reference/merged)
         if (existingHashes.has(hash)) {
           // Don't increment skipped here - handled at end of loop when applied=false
