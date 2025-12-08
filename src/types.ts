@@ -76,7 +76,9 @@ export const PlaybookBulletSchema = z.object({
   promotedAt: z.string().optional(),
   helpfulCount: z.number().default(0),
   harmfulCount: z.number().default(0),
-  feedbackEvents: z.array(FeedbackEventSchema).default([]), 
+  feedbackEvents: z.array(FeedbackEventSchema).default([]),
+  helpfulEvents: z.array(FeedbackEventSchema).default([]),
+  harmfulEvents: z.array(FeedbackEventSchema).default([]),
   lastValidatedAt: z.string().optional(),
   confidenceDecayHalfLifeDays: z.number().default(90),
   createdAt: z.string(),
@@ -415,8 +417,8 @@ export type ConflictReport = z.infer<typeof ConflictReportSchema>;
 
 export const PromotionReportSchema = z.object({
   bulletId: z.string(),
-  from: BulletMaturitySchema,
-  to: BulletMaturitySchema,
+  from: BulletMaturityEnum,
+  to: BulletMaturityEnum,
   reason: z.string().optional(),
 });
 export type PromotionReport = z.infer<typeof PromotionReportSchema>;
