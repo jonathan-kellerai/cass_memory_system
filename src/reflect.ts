@@ -114,8 +114,12 @@ Snippet: "${h.snippet}"
 // --- Helper: Deduplication ---
 
 export function hashDelta(delta: PlaybookDelta): string {
-  if (delta.type === "add") return `add:${delta.bullet.content?.toLowerCase()}`;
-  if (delta.type === "replace") return `replace:${delta.bulletId}:${delta.newContent}`;
+  if (delta.type === "add") {
+    return `add:${(delta.bullet.content || "").toLowerCase()}`;
+  }
+  if (delta.type === "replace") {
+    return `replace:${delta.bulletId}:${(delta.newContent || "").toLowerCase()}`;
+  }
   
   // Only types with bulletId fall through here
   if ("bulletId" in delta) {
@@ -124,7 +128,7 @@ export function hashDelta(delta: PlaybookDelta): string {
   
   // Merge delta handling
   if (delta.type === "merge") {
-    return `merge:${delta.bulletIds.sort().join(",")}`;
+    return `merge:${[...delta.bulletIds].sort().join(",")}`;
   }
   
   return JSON.stringify(delta);
