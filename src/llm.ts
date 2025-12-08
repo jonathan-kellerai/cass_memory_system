@@ -20,6 +20,7 @@ export type LLMProvider = "openai" | "anthropic" | "google";
 export interface LLMConfig {
   provider: LLMProvider;
   model: string;
+  apiKey?: string;
 }
 
 /**
@@ -94,10 +95,10 @@ export function validateApiKey(provider: string): void {
   }
 }
 
-export function getModel(config: { provider: string; model: string }): LanguageModel {
+export function getModel(config: { provider: string; model: string; apiKey?: string }): LanguageModel {
   try {
     const provider = config.provider as LLMProvider;
-    const apiKey = getApiKey(provider);
+    const apiKey = config.apiKey || getApiKey(provider);
     
     switch (provider) {
       case "openai": return createOpenAI({ apiKey })(config.model);
@@ -354,6 +355,7 @@ export async function extractDiary<T>(
   const llmConfig: LLMConfig = {
     provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
+    apiKey: config.apiKey
   };
 
   const model = getModel(llmConfig);
@@ -389,6 +391,7 @@ export async function runReflector<T>(
   const llmConfig: LLMConfig = {
     provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
+    apiKey: config.apiKey
   };
 
   const model = getModel(llmConfig);
@@ -456,6 +459,7 @@ export async function runValidator(
   const llmConfig: LLMConfig = {
     provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
+    apiKey: config.apiKey
   };
 
   const model = getModel(llmConfig);
@@ -501,6 +505,7 @@ export async function generateContext(
   const llmConfig: LLMConfig = {
     provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
+    apiKey: config.apiKey
   };
 
   const model = getModel(llmConfig);
@@ -513,13 +518,13 @@ export async function generateContext(
   });
 
   return llmWithRetry(async () => {
-    const { object } = await generateObject({
+    const { briefing } = await generateObject({
       model,
       schema: z.object({ briefing: z.string() }), // Using structured object to force format
       prompt,
       temperature: 0.3,
     });
-    return object.briefing;
+    return briefing;
   }, "generateContext");
 }
 
@@ -530,6 +535,7 @@ export async function generateSearchQueries(
   const llmConfig: LLMConfig = {
     provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
+    apiKey: config.apiKey
   };
 
   const model = getModel(llmConfig);

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'bun:test';
-import { getApiKey } from '../src/llm';
+import { describe, it, expect } from "bun:test";
+import { getApiKey } from "../src/llm.js";
 
 describe('getApiKey', () => {
   it('should return API key if set', () => {
