@@ -23,12 +23,6 @@ function getHarmfulMultiplier(config: Config): number {
   return 4;
 }
 
-function getPruneHarmfulThreshold(config: Config): number {
-  const threshold = (config as any)?.pruneHarmfulThreshold;
-  if (typeof threshold === "number" && threshold > 0) return threshold;
-  return 3; // Default: prune if score < -3
-}
-
 // ---------------------------------------------------------------------------
 // Decay
 // ---------------------------------------------------------------------------
@@ -56,6 +50,7 @@ export function getDecayedCounts(
   let decayedHelpful = 0;
   let decayedHarmful = 0;
 
+  // Only use feedbackEvents as single source of truth
   const allHelpful = (bullet.feedbackEvents || []).filter((e) => e.type === "helpful");
   const allHarmful = (bullet.feedbackEvents || []).filter((e) => e.type === "harmful");
 
@@ -138,9 +133,8 @@ export function checkForDemotion(
   if (bullet.pinned) return bullet.maturity;
 
   const score = getEffectiveScore(bullet, config);
-  const threshold = getPruneHarmfulThreshold(config);
 
-  if (score < -threshold) {
+  if (score < -config.pruneHarmfulThreshold) {
     return "auto-deprecate";
   }
 
@@ -160,6 +154,7 @@ export function isStale(
   bullet: PlaybookBullet,
   staleDays = 90
 ): boolean {
+  // Only use feedbackEvents
   const events = bullet.feedbackEvents || [];
 
   if (events.length === 0) {

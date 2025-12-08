@@ -314,7 +314,7 @@ cm doctor
 
 - **Hot reload**: `bun --watch run src/cass-memory.ts <command>` restarts on source changes.
 - **Type safety**: `bun run typecheck` (or `tsc --noEmit`) runs continuously with `--watch`.
-- **Tests**: `bun test` and `bun test --watch` cover the suite; keep a watch pane open while iterating.
+- **Tests**: `bun test` and `bun test --watch` cover the suite; keep a watch pane open while iterating. For per-test timing and slow-test highlighting, use the bundled reporter: `bun test --reporter ./test/helpers/reporter.ts`.
 - **Lint/format**: Prefer small, surgical edits over bulk codemods; follow existing style and avoid adding new lockfiles or toolchains.
 - **DX principle**: All commands should deliver value within seconds on a clean machine; degraded modes must still return helpful output instead of failing hard.
 
@@ -908,7 +908,11 @@ Artifacts write to `dist/` (e.g., `dist/cass-memory-darwin-arm64`, `dist/cass-me
 ```bash
 bun test
 bun run typecheck
+# With timing reporter
+bun test --reporter ./test/helpers/reporter.ts
 ```
+
+Test fixtures live under `test/fixtures/` (sample playbooks/config/diary), and reusable helpers under `test/helpers/` (`withTempDir`, factories, logger, timing reporter) to keep new tests lean and deterministic.
 
 ---
 

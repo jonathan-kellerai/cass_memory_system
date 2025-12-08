@@ -62,6 +62,13 @@ export async function markCommand(
     targetBullet.feedbackEvents = targetBullet.feedbackEvents || [];
     targetBullet.feedbackEvents.push(event);
 
+    // Keep legacy counters in sync for backwards compatibility
+    if (type === "helpful") {
+      targetBullet.helpfulCount = (targetBullet.helpfulCount || 0) + 1;
+    } else {
+      targetBullet.harmfulCount = (targetBullet.harmfulCount || 0) + 1;
+    }
+
     targetBullet.updatedAt = now();
     targetBullet.maturity = calculateMaturityState(targetBullet, config);
 

@@ -5,7 +5,7 @@ import { Config, DiaryEntry, RelatedSession, DiaryEntrySchema } from './types.js
 import { extractDiary } from './llm.js';
 import { getSanitizeConfig } from './config.js';
 import { sanitize } from './security.js';
-import { extractAgentFromPath, expandPath, ensureDir, tokenize } from './utils.js';
+import { extractAgentFromPath, expandPath, ensureDir, tokenize, generateDiaryId } from './utils.js';
 import { safeCassSearch } from './cass.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -253,7 +253,7 @@ export async function generateDiary(sessionPath: string, config: Config): Promis
   const related = await enrichWithRelatedSessions(sanitizedContent, config);
   
   const diary: DiaryEntry = {
-    id: `diary-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: generateDiaryId(sessionPath),
     sessionPath,
     timestamp: new Date().toISOString(),
     agent,
