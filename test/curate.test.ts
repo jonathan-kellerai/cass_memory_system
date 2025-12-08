@@ -607,6 +607,29 @@ describe("curatePlaybook", () => {
       const antiPattern = result.playbook.bullets.find(b => b.kind === "anti_pattern");
       expect(antiPattern?.confidenceDecayHalfLifeDays).toBe(45);
     });
+
+    it("does not invert when harmful events are stale and decayed", () => {
+      const staleDate = new Date(Date.now() - 200 * 86_400_000).toISOString(); // ~200 days ago
+      const bullet = createTestBullet({
+        id: "harmful-stale",
+        content: "Use var everywhere",
+        harmfulCount: 5,
+        helpfulCount: 0,
+        feedbackEvents: Array(5).fill(null).map(() =>
+          createFeedbackEvent("harmful", { timestamp: staleDate })
+        )
+      });
+      const playbook = createTestPlaybook([bullet]);
+
+      const result = curatePlaybook(playbook, [], config);
+
+      // No inversions because decayed harmful falls below threshold
+      expect(result.inversions).toHaveLength(0);
+      // Bullet should remain non-deprecated/non-inverted
+      const original = result.playbook.bullets.find(b => b.id === "harmful-stale");
+      expect(original?.deprecated).toBe(false);
+      expect(original?.kind).not.toBe("anti_pattern");
+    });
   });
 
   // =========================================================================
@@ -677,6 +700,36 @@ describe("curatePlaybook", () => {
       // Should either be inverted OR auto-deprecated
       const bullet = result.playbook.bullets.find(b => b.id === "bad-1");
       expect(bullet?.deprecated || result.inversions.length > 0).toBe(true);
+    });
+
+    it("increments pruned count when auto-deprecation occurs via demotion", () => {
+      const now = new Date().toISOString();
+      const badBullet = createTestBullet({
+        id: "bad-2",
+        content: "Very harmful rule",
+        maturity: "established",
+        harmfulCount: 5,
+        helpfulCount: 3,
+        pinned: false,
+        feedbackEvents: [
+          // Harmful dominant enough to force negative score (< -pruneHarmfulThreshold)
+          createFeedbackEvent("harmful", { timestamp: now }),
+          createFeedbackEvent("harmful", { timestamp: now }),
+          createFeedbackEvent("harmful", { timestamp: now }),
+          createFeedbackEvent("harmful", { timestamp: now }),
+          createFeedbackEvent("harmful", { timestamp: now }),
+          createFeedbackEvent("helpful", { timestamp: now }),
+          createFeedbackEvent("helpful", { timestamp: now }),
+          createFeedbackEvent("helpful", { timestamp: now }),
+        ]
+      });
+      const playbook = createTestPlaybook([badBullet]);
+
+      const result = curatePlaybook(playbook, [], config);
+
+      const target = result.playbook.bullets.find(b => b.id === "bad-2");
+      expect(target?.deprecated).toBe(true);
+      expect(result.pruned).toBeGreaterThanOrEqual(1);
     });
   });
 
