@@ -90,6 +90,113 @@ export async function savePlaybook(playbook: Playbook, filePath: string): Promis
   await atomicWrite(filePath, yamlStr);
 }
 
+// --- Error Recovery ---
+
+export interface PlaybookRecoveryResult {
+  playbook: Playbook;
+  backupPath: string | null;
+  errorType: "parse_error" | "validation_error" | "truncation" | "unknown";
+  originalError: Error;
+}
+
+/**
+ * Recover from a corrupt or malformed playbook file.
+ *
+ * Prioritizes data safety:
+ * 1. Backs up the corrupt file to {path}.backup.{timestamp}
+ * 2. Logs the corruption details
+ * 3. Creates a fresh empty playbook
+ * 4. Returns recovery result with backup location
+ *
+ * @param playbookPath - Path to the corrupt playbook file
+ * @param error - The error that was thrown during loading
+ * @returns Recovery result with new playbook and backup info
+ */
+export async function recoverCorruptPlaybook(
+  playbookPath: string,
+  error: Error
+): Promise<PlaybookRecoveryResult> {
+  const expanded = expandPath(playbookPath);
+  let backupPath: string | null = null;
+
+  // Determine error type for better diagnostics
+  let errorType: PlaybookRecoveryResult["errorType"] = "unknown";
+  if (error.message.includes("YAML") || error.message.includes("parse") || error.message.includes("Unexpected")) {
+    errorType = "parse_error";
+  } else if (error.message.includes("validation") || error.message.includes("invalid") || error.name === "ZodError") {
+    errorType = "validation_error";
+  } else if (error.message.includes("truncat") || error.message.includes("incomplete")) {
+    errorType = "truncation";
+  }
+
+  // Step 1: Backup the corrupt file (never lose user data)
+  try {
+    if (await fileExists(expanded)) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      backupPath = `${expanded}.backup.${timestamp}`;
+      await fs.copyFile(expanded, backupPath);
+      log(`Backed up corrupt playbook to: ${backupPath}`, true);
+    }
+  } catch (backupErr: any) {
+    warn(`Failed to backup corrupt playbook: ${backupErr.message}`);
+    // Continue with recovery even if backup fails
+  }
+
+  // Step 2: Log the corruption details
+  logError(`Playbook recovery triggered for ${expanded}`);
+  logError(`Error type: ${errorType}`);
+  logError(`Original error: ${error.message}`);
+
+  if (backupPath) {
+    log(`Your original data was saved to: ${backupPath}`, true);
+    log(`You can attempt manual recovery by examining the backup file.`, true);
+  }
+
+  // Step 3: Create fresh empty playbook
+  const newPlaybook = createEmptyPlaybook(path.basename(expanded, path.extname(expanded)));
+
+  // Step 4: Log recovery instructions
+  log(`Created new empty playbook. Previous rules need manual recovery from backup.`, true);
+  log(`To recover manually:`, true);
+  log(`  1. Open ${backupPath || "the backup file"}`, true);
+  log(`  2. Fix any syntax errors`, true);
+  log(`  3. Copy valid bullets to the new playbook`, true);
+
+  return {
+    playbook: newPlaybook,
+    backupPath,
+    errorType,
+    originalError: error
+  };
+}
+
+/**
+ * Load playbook with automatic recovery on corruption.
+ *
+ * Use this when you want graceful degradation instead of hard failure.
+ * Returns both the playbook and recovery info if recovery was needed.
+ */
+export async function loadPlaybookWithRecovery(
+  filePath: string
+): Promise<{ playbook: Playbook; recovered: boolean; recovery?: PlaybookRecoveryResult }> {
+  try {
+    const playbook = await loadPlaybook(filePath);
+    return { playbook, recovered: false };
+  } catch (err: any) {
+    // Don't recover from ENOENT - that's handled by loadPlaybook
+    if (err.code === "ENOENT") {
+      throw err;
+    }
+
+    const recovery = await recoverCorruptPlaybook(filePath, err);
+    return {
+      playbook: recovery.playbook,
+      recovered: true,
+      recovery
+    };
+  }
+}
+
 // --- Cascading & Merging ---
 
 export async function loadToxicLog(logPath: string): Promise<ToxicEntry[]> {

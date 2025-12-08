@@ -274,3 +274,49 @@ export async function loadDiary(idOrPath: string, config: Config): Promise<Diary
     return null;
   }
 }
+
+/**
+ * Load all diary entries from a directory.
+ *
+ * @param diaryDir - Path to the diary directory
+ * @param limit - Maximum number of entries to load (default: 100)
+ * @returns Array of diary entries sorted by timestamp (most recent first)
+ */
+export async function loadAllDiaries(diaryDir: string, limit = 100): Promise<DiaryEntry[]> {
+  const expanded = expandPath(diaryDir);
+  const entries: DiaryEntry[] = [];
+
+  try {
+    const files = await fs.readdir(expanded);
+    const jsonFiles = files
+      .filter(f => f.endsWith(".json"))
+      .slice(0, limit * 2); // Read extra to account for validation failures
+
+    for (const file of jsonFiles) {
+      if (entries.length >= limit) break;
+
+      try {
+        const fullPath = path.join(expanded, file);
+        const content = await fs.readFile(fullPath, "utf-8");
+        const json = JSON.parse(content);
+        const diary = DiaryEntrySchema.parse(json);
+        entries.push(diary);
+      } catch {
+        // Skip invalid entries silently
+      }
+    }
+
+    // Sort by timestamp, most recent first
+    entries.sort((a, b) =>
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    return entries.slice(0, limit);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      return [];
+    }
+    warn(`Failed to load diaries from ${expanded}: ${err.message}`);
+    return [];
+  }
+}
