@@ -6,7 +6,7 @@ import yaml from "yaml";
 
 import {
   addBullet,
-  appendToxicLog,
+  appendBlockedLog,
   computeFullStats,
   createEmptyPlaybook,
   deprecateBullet,
@@ -16,9 +16,9 @@ import {
   getBulletsByCategory,
   loadPlaybook,
   loadMergedPlaybook,
-  loadToxicLog,
+  loadBlockedLog,
   savePlaybook,
-  ToxicEntry,
+  BlockedEntry,
 } from "../src/playbook.js";
 import { Playbook, PlaybookBullet } from "../src/types.js";
 import { createTestBullet, createTestConfig } from "./helpers/index.js";
@@ -221,7 +221,7 @@ describe("loadMergedPlaybook", () => {
     });
   });
 
-  it("filters bullets present in toxic logs (global or repo)", async () => {
+  it("filters bullets present in blocked logs (global or repo)", async () => {
     await withTempDir(async (dir) => {
       const home = path.join(dir, "home");
       const repo = path.join(dir, "repo");
@@ -233,11 +233,11 @@ describe("loadMergedPlaybook", () => {
       const globalPath = path.join(home, ".cass-memory", "playbook.yaml");
       const repoPath = path.join(repo, ".cass", "playbook.yaml");
 
-      const toxicContent = "bad rule to block";
+      const blockedContent = "bad rule to block";
       const globalPb = createEmptyPlaybook("global");
       globalPb.bullets = [
         createTestBullet({ id: "b-keep", content: "keep me" }),
-        createTestBullet({ id: "b-toxic", content: toxicContent }),
+        createTestBullet({ id: "b-blocked", content: blockedContent }),
       ];
 
       const repoPb = createEmptyPlaybook("repo");
@@ -248,24 +248,24 @@ describe("loadMergedPlaybook", () => {
       await writePlaybookFile(globalPath, globalPb);
       await writePlaybookFile(repoPath, repoPb);
 
-      const globalToxicPath = path.join(home, ".cass-memory", "toxic_bullets.log");
-      const repoToxicPath = path.join(repo, ".cass", "toxic.log");
-      const toxicEntry = {
+      const globalBlockedPath = path.join(home, ".cass-memory", "blocked.log");
+      const repoBlockedPath = path.join(repo, ".cass", "blocked.log");
+      const blockedEntry = {
         id: "t-1",
-        content: toxicContent,
+        content: blockedContent,
         reason: "blocked",
         forgottenAt: new Date().toISOString(),
       };
-      await fs.mkdir(path.dirname(globalToxicPath), { recursive: true });
-      await fs.mkdir(path.dirname(repoToxicPath), { recursive: true });
-      await fs.writeFile(globalToxicPath, JSON.stringify(toxicEntry) + "\n");
-      await fs.writeFile(repoToxicPath, JSON.stringify(toxicEntry) + "\n");
+      await fs.mkdir(path.dirname(globalBlockedPath), { recursive: true });
+      await fs.mkdir(path.dirname(repoBlockedPath), { recursive: true });
+      await fs.writeFile(globalBlockedPath, JSON.stringify(blockedEntry) + "\n");
+      await fs.writeFile(repoBlockedPath, JSON.stringify(blockedEntry) + "\n");
 
       const config = createTestConfig({ playbookPath: globalPath });
       const merged = await loadMergedPlaybook(config);
 
       const contents = merged.bullets.map((b) => b.content);
-      expect(contents).not.toContain(toxicContent);
+      expect(contents).not.toContain(blockedContent);
       expect(contents).toContain("keep me");
       expect(contents).toContain("repo keep");
     });
@@ -770,31 +770,31 @@ describe("exportToMarkdown", () => {
 });
 
 // =============================================================================
-// loadToxicLog
+// loadBlockedLog (deprecated alias: loadToxicLog)
 // =============================================================================
-describe("loadToxicLog", () => {
+describe("loadBlockedLog", () => {
   it("returns empty array for non-existent file", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "toxic.log");
-      const entries = await loadToxicLog(logPath);
+      const logPath = path.join(dir, "blocked.log");
+      const entries = await loadBlockedLog(logPath);
       expect(entries).toEqual([]);
     });
   });
 
-  it("loads valid toxic entries", async () => {
+  it("loads valid blocked entries", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "toxic.log");
-      const entry: ToxicEntry = {
+      const logPath = path.join(dir, "blocked.log");
+      const entry: BlockedEntry = {
         id: "t-1",
-        content: "Toxic rule",
+        content: "Blocked rule",
         reason: "Caused bugs",
         forgottenAt: "2024-01-01T00:00:00Z",
       };
       await fs.writeFile(logPath, JSON.stringify(entry) + "\n");
 
-      const entries = await loadToxicLog(logPath);
+      const entries = await loadBlockedLog(logPath);
       expect(entries.length).toBe(1);
-      expect(entries[0].content).toBe("Toxic rule");
+      expect(entries[0].content).toBe("Blocked rule");
     });
   });
 

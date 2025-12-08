@@ -264,10 +264,10 @@ describe("E2E: CLI init command", () => {
           expect(playbook).toBeDefined();
           expect(playbook.bullets).toEqual([]);
 
-          // Verify toxic.log created
-          const toxicLogPath = path.join(cassDir, "toxic.log");
-          const toxicLogExists = await exists(toxicLogPath);
-          expect(toxicLogExists).toBe(true);
+          // Verify blocked.log created
+          const blockedLogPath = path.join(cassDir, "blocked.log");
+          const blockedLogExists = await exists(blockedLogPath);
+          expect(blockedLogExists).toBe(true);
 
           logger.info("Repo init verified", {
             cassDir: cassDirExists,
