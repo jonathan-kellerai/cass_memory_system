@@ -17,6 +17,7 @@ import { usageCommand } from "./commands/usage.js";
 import { startersCommand } from "./commands/starters.js";
 import { quickstartCommand } from "./commands/quickstart.js";
 import { topCommand } from "./commands/top.js";
+import { staleCommand } from "./commands/stale.js";
 
 const program = new Command();
 const toInt = (value: string) => parseInt(value, 10);
@@ -119,6 +120,14 @@ program.command("top")
   .option("--category <cat>", "Filter by category")
   .option("--json", "Output JSON")
   .action(async (count: number, opts: any) => await topCommand(count, opts));
+
+// --- Stale ---
+program.command("stale")
+  .description("Find bullets without recent feedback")
+  .option("--days <n>", "Stale threshold in days", toInt, 90)
+  .option("--scope <scope>", "Filter by scope (global, workspace, all)")
+  .option("--json", "Output JSON")
+  .action(async (opts: any) => await staleCommand(opts));
 
 // --- Usage ---
 program.command("usage")
