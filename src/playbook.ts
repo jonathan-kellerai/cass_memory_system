@@ -202,13 +202,16 @@ export async function loadPlaybookWithRecovery(
 
 // --- Cascading & Merging ---
 
-export async function loadBlockedLog(logPath: string): Promise<BlockedEntry[]> {
+export async function loadBlockedLog(logPath: string): Promise<ToxicEntry[]> {
   const expanded = expandPath(logPath);
-  if (!(await fileExists(expanded))) return [];
+  if (!(await fileExists(expanded))) {
+    // console.log(`[debug] Blocked log not found: ${expanded}`); // Debug log
+    return [];
+  }
 
   try {
     const content = await fs.readFile(expanded, "utf-8");
-    const entries: BlockedEntry[] = [];
+    const entries: ToxicEntry[] = [];
 
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
@@ -225,7 +228,7 @@ export async function loadBlockedLog(logPath: string): Promise<BlockedEntry[]> {
         warn(`Skipping malformed line in blocked log: ${trimmed.slice(0, 50)}...`);
       }
     }
-
+    // console.log(`[debug] Loaded ${entries.length} entries from ${expanded}`); // Debug log
     return entries;
   } catch (err: any) {
     warn(`Failed to read blocked log ${expanded}: ${err.message}`);
@@ -299,13 +302,13 @@ export async function loadMergedPlaybook(config: Config): Promise<Playbook> {
   const allBlocked = [...globalBlocked, ...globalToxic, ...repoBlocked, ...repoToxic];
 
   if (allBlocked.length > 0) {
-    const filtered: PlaybookBullet[] = [];
     for (const b of merged.bullets) {
-      if (!(await isBlockedContent(b.content, allBlocked))) {
-        filtered.push(b);
+      if (b.deprecated) continue;
+      if (await isBlockedContent(b.content, allBlocked)) {
+        // Keep state fields consistent with other deprecations
+        deprecateBullet(merged, b.id, "BLOCKED_CONTENT");
       }
     }
-    merged.bullets = filtered;
   }
   
   return merged;
@@ -428,6 +431,132 @@ export function exportToMarkdown(
     }
     md += "\n";
   }
+
+  return md;
+}
+
+/**
+ * Export playbook in AGENTS.md format.
+ * Structured format with maturity badges and effectiveness metrics.
+ */
+export function exportToAgentsMd(
+  playbook: Playbook,
+  config: Config,
+  options: { topN?: number; showCounts?: boolean } = {}
+): string {
+  const active = getActiveBullets(playbook);
+  const rules = active.filter(b => b.type !== "anti-pattern" && b.kind !== "anti_pattern");
+  const antiPatterns = active.filter(b => b.type === "anti-pattern" || b.kind === "anti_pattern");
+
+  // Sort by effective score (highest first)
+  const sortedRules = [...rules].sort((a, b) =>
+    getEffectiveScore(b, config) - getEffectiveScore(a, config)
+  );
+  const sortedAntiPatterns = [...antiPatterns].sort((a, b) =>
+    getEffectiveScore(b, config) - getEffectiveScore(a, config)
+  );
+
+  // Group by category
+  const categories: Record<string, PlaybookBullet[]> = {};
+  for (const b of sortedRules) {
+    if (!categories[b.category]) categories[b.category] = [];
+    categories[b.category].push(b);
+  }
+
+  const maturityIcon = (m: string) => {
+    switch (m) {
+      case "proven": return "✅";
+      case "established": return "🔵";
+      case "candidate": return "🟡";
+      default: return "⚪";
+    }
+  };
+
+  let md = `# AGENTS.md\n\n`;
+  md += `> Auto-generated playbook for AI coding assistants.\n`;
+  md += `> Last updated: ${new Date().toISOString().split("T")[0]}\n\n`;
+
+  // Stats summary
+  const stats = computeFullStats(playbook, config);
+  md += `## Summary\n\n`;
+  md += `- **Total rules**: ${stats.total}\n`;
+  md += `- **Proven**: ${stats.byMaturity.proven} | **Established**: ${stats.byMaturity.established} | **Candidate**: ${stats.byMaturity.candidate}\n`;
+  md += `- **Score distribution**: ${stats.scoreDistribution.excellent} excellent, ${stats.scoreDistribution.good} good, ${stats.scoreDistribution.neutral} neutral, ${stats.scoreDistribution.atRisk} at-risk\n\n`;
+
+  md += `## Rules\n\n`;
+
+  for (const [cat, bullets] of Object.entries(categories)) {
+    md += `### ${cat}\n\n`;
+    const slice = options.topN ? bullets.slice(0, options.topN) : bullets;
+    for (const b of slice) {
+      const icon = maturityIcon(b.maturity);
+      const score = getEffectiveScore(b, config).toFixed(1);
+      const counts = options.showCounts ? ` [${b.helpfulCount ?? 0}+/${b.harmfulCount ?? 0}-]` : "";
+      md += `- ${icon} ${b.content}${counts} _(score: ${score})_\n`;
+    }
+    md += "\n";
+  }
+
+  if (sortedAntiPatterns.length > 0) {
+    md += `## Anti-Patterns (AVOID)\n\n`;
+    const slice = options.topN ? sortedAntiPatterns.slice(0, options.topN) : sortedAntiPatterns;
+    for (const b of slice) {
+      const counts = options.showCounts ? ` [${b.helpfulCount ?? 0}+/${b.harmfulCount ?? 0}-]` : "";
+      md += `- ⛔ ${b.content}${counts}\n`;
+    }
+    md += "\n";
+  }
+
+  return md;
+}
+
+/**
+ * Export playbook in Claude-specific format.
+ * Includes context sections and Claude-optimized instructions.
+ */
+export function exportToClaudeMd(
+  playbook: Playbook,
+  config: Config,
+  options: { topN?: number; showCounts?: boolean } = {}
+): string {
+  const active = getActiveBullets(playbook);
+  const rules = active.filter(b => b.type !== "anti-pattern" && b.kind !== "anti_pattern");
+  const antiPatterns = active.filter(b => b.type === "anti-pattern" || b.kind === "anti_pattern");
+
+  // Sort by effective score (highest first)
+  const sortedRules = [...rules].sort((a, b) =>
+    getEffectiveScore(b, config) - getEffectiveScore(a, config)
+  );
+
+  // Group by category
+  const categories: Record<string, PlaybookBullet[]> = {};
+  for (const b of sortedRules) {
+    if (!categories[b.category]) categories[b.category] = [];
+    categories[b.category].push(b);
+  }
+
+  let md = `<project_rules>\n`;
+  md += `<!-- Auto-generated rules from cass-memory playbook -->\n\n`;
+
+  for (const [cat, bullets] of Object.entries(categories)) {
+    md += `## ${cat}\n\n`;
+    const slice = options.topN ? bullets.slice(0, options.topN) : bullets;
+    for (const b of slice) {
+      md += `- ${b.content}\n`;
+    }
+    md += "\n";
+  }
+
+  if (antiPatterns.length > 0) {
+    md += `## IMPORTANT: Avoid These Patterns\n\n`;
+    const slice = options.topN ? antiPatterns.slice(0, options.topN) : antiPatterns;
+    for (const b of slice) {
+      md += `- DO NOT: ${b.content}\n`;
+    }
+    md += "\n";
+  }
+
+  md += `</project_rules>\n`;
 
   return md;
 }
