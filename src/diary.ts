@@ -132,7 +132,7 @@ async function enrichWithRelatedSessions(
   const hits = await safeCassSearch(query, {
     limit: 5,
     days: config.sessionLookbackDays,
-  }, config.cassPath, config);
+  }, config.cassPath);
 
   // 3. Filter and Format
   const related: RelatedSession[] = hits
@@ -161,30 +161,13 @@ export async function generateDiary(
   log(`Generating diary for ${sessionPath}...`);
 
   // 1. Export Session
-  const rawContent = await cassExport(sessionPath, "markdown", config.cassPath, config);
+  const rawContent = await cassExport(sessionPath, "markdown", config.cassPath);
   if (!rawContent) {
     throw new Error(`Failed to export session: ${sessionPath}`);
   }
 
   // 2. Sanitize
-  // Fix: Properly compile patterns and construct sanitization config
   const compiledPatterns = compileExtraPatterns(config.sanitization.extraPatterns || []);
-  
-  const sanitizationConfig: SanitizationConfig = {
-    enabled: config.sanitization.enabled,
-    extraPatterns: config.sanitization.extraPatterns || [],
-    auditLog: config.sanitization.auditLog,
-    auditLevel: config.sanitization.auditLevel || "off"
-  };
-  
-  // For runtime usage in sanitize utility, we pass the regexes manually if utility supports it?
-  // sanitize utility interface: extraPatterns?: RegExp[];
-  // Config has string[].
-  // We need to pass an object that matches what sanitize() expects.
-  // sanitize() signature: (text: string, config: SanitizationConfig) -> but SanitizationConfig in sanitize.ts has RegExp[]
-  // While SanitizationConfig in types.ts has string[] (for JSON config file).
-  // This mismatch causes the issue.
-  // We should cast or construct the object expected by sanitize().
   
   const runtimeSanitizeConfig = {
     enabled: config.sanitization.enabled,
@@ -203,7 +186,7 @@ export async function generateDiary(
   const metadata = extractSessionMetadata(sessionPath);
 
   // 4. LLM Extraction
-  const ExtractionSchema = DiaryEntrySchema.omit({ 
+  const ExtractionSchema = DiaryEntrySchema.omit({
     id: true, 
     sessionPath: true, 
     timestamp: true, 
@@ -244,6 +227,9 @@ export async function generateDiary(
 
   // 7. Enrich (Cross-Agent)
   const enrichedDiary = await enrichWithRelatedSessions(diary, config);
+
+  // 8. Save
+  await saveDiary(enrichedDiary, config);
 
   return enrichedDiary;
 }
