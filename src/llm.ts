@@ -81,7 +81,7 @@ export function validateApiKey(provider: string): void {
   const placeholders = ["YOUR_API_KEY", "xxx", "test", "demo", "placeholder"];
   const lowerKey = apiKey.toLowerCase();
   for (const placeholder of placeholders) {
-    if (lowerKey.includes(placeholder)) {
+    if (lowerKey.includes(placeholder.toLowerCase())) {
       console.warn(
         `Warning: ${provider} API key appears to contain a placeholder ('${placeholder}')`
       );
@@ -290,6 +290,11 @@ export function truncateForPrompt(content: string, maxChars = 50000): string {
   if (content.length <= maxChars) return content;
 
   const keepChars = Math.floor((maxChars - 100) / 2);
+  
+  if (keepChars <= 0) {
+    return `[... ${content.length} characters truncated ...]`;
+  }
+
   const beginning = content.slice(0, keepChars);
   const ending = content.slice(-keepChars);
 
@@ -639,7 +644,7 @@ export async function generateSearchQueries(
   config: Config
 ): Promise<string[]> {
   const llmConfig: LLMConfig = {
-    provider: (config.llm?.provider ?? config.provider) as LLMProvider,
+    provider: config.llm?.provider ?? config.provider,
     model: config.llm?.model ?? config.model,
     apiKey: config.apiKey
   };
