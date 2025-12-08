@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { mkdir, writeFile, unlink, stat, readFile } from "node:fs/promises";
+import { mkdir, writeFile, rm, stat, readFile } from "node:fs/promises";
 import { withLock } from "../src/lock.js";
 import { withTempDir } from "./helpers/index.js";
 
@@ -21,18 +21,18 @@ describe("withLock - Basic Operations", () => {
     });
   });
 
-  it("creates lock file during operation", async () => {
+  it("creates lock directory during operation", async () => {
     await withTempDir("lock-creates", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       let lockExistedDuringOp = false;
 
       await withLock(targetPath, async () => {
         try {
-          await stat(lockPath);
-          lockExistedDuringOp = true;
+          const stats = await stat(lockPath);
+          lockExistedDuringOp = stats.isDirectory();
         } catch {
           lockExistedDuringOp = false;
         }
@@ -43,11 +43,11 @@ describe("withLock - Basic Operations", () => {
     });
   });
 
-  it("removes lock file after operation completes", async () => {
+  it("removes lock directory after operation completes", async () => {
     await withTempDir("lock-cleanup", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       await withLock(targetPath, async () => null);
 
@@ -62,16 +62,16 @@ describe("withLock - Basic Operations", () => {
     });
   });
 
-  it("stores PID in lock file", async () => {
+  it("stores PID in lock directory", async () => {
     await withTempDir("lock-pid", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       let pidContent = "";
 
       await withLock(targetPath, async () => {
-        pidContent = await readFile(lockPath, "utf-8");
+        pidContent = await readFile(join(lockPath, "pid"), "utf-8");
         return null;
       });
 
@@ -96,11 +96,11 @@ describe("withLock - Basic Operations", () => {
 // withLock - Error Handling
 // =============================================================================
 describe("withLock - Error Handling", () => {
-  it("removes lock file when operation throws", async () => {
+  it("removes lock directory when operation throws", async () => {
     await withTempDir("lock-error", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       let errorThrown = false;
       try {
@@ -190,10 +190,11 @@ describe("withLock - Lock Contention", () => {
     await withTempDir("lock-wait", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       // Manually create lock
-      await writeFile(lockPath, "999999");
+      await mkdir(lockPath);
+      await writeFile(join(lockPath, "pid"), "999999");
 
       // Start operation that will need to wait
       const startTime = Date.now();
@@ -206,7 +207,7 @@ describe("withLock - Lock Contention", () => {
       // Release lock after 100ms
       setTimeout(async () => {
         try {
-          await unlink(lockPath);
+          await rm(lockPath, { recursive: true, force: true });
         } catch {
           // Ignore
         }
@@ -224,16 +225,19 @@ describe("withLock - Lock Contention", () => {
     await withTempDir("lock-timeout", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       // Create a lock that won't be released
-      await writeFile(lockPath, process.pid.toString());
+      await mkdir(lockPath);
+      await writeFile(join(lockPath, "pid"), process.pid.toString());
 
-      // Touch the file continuously to keep it fresh
+      // Touch the lock directory continuously to keep it fresh
+      // Using utimes to update directory mtime
+      const { utimes } = await import("node:fs/promises");
       const interval = setInterval(async () => {
         try {
-          const content = await readFile(lockPath, "utf-8");
-          await writeFile(lockPath, content);
+          const now = new Date();
+          await utimes(lockPath, now, now);
         } catch {
           // Ignore errors
         }
@@ -246,7 +250,7 @@ describe("withLock - Lock Contention", () => {
       } finally {
         clearInterval(interval);
         try {
-          await unlink(lockPath);
+          await rm(lockPath, { recursive: true, force: true });
         } catch {
           // Ignore
         }
@@ -259,14 +263,16 @@ describe("withLock - Lock Contention", () => {
 // withLock - Stale Lock Detection
 // =============================================================================
 describe("withLock - Stale Lock Detection", () => {
-  it("removes stale lock files (> 30s old)", async () => {
+  it("removes stale lock directories (> 30s old)", async () => {
     await withTempDir("lock-stale", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
-      // Create a lock file with old mtime
-      await writeFile(lockPath, "999999");
+      // Create a lock dir with old mtime
+      await mkdir(lockPath);
+      await writeFile(join(lockPath, "pid"), "999999");
+      
       const oldTime = Date.now() - 35_000; // 35 seconds ago
       const { utimes } = await import("node:fs/promises");
       await utimes(lockPath, oldTime / 1000, oldTime / 1000);
@@ -277,20 +283,22 @@ describe("withLock - Stale Lock Detection", () => {
     });
   });
 
-  it("does not remove fresh lock files", async () => {
+  it("does not remove fresh lock directories", async () => {
     await withTempDir("lock-fresh", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       // Create a fresh lock
-      await writeFile(lockPath, "999999");
+      await mkdir(lockPath);
+      await writeFile(join(lockPath, "pid"), "999999");
 
       // Keep the lock fresh
+      const { utimes } = await import("node:fs/promises");
       const interval = setInterval(async () => {
         try {
-          const content = await readFile(lockPath, "utf-8");
-          await writeFile(lockPath, content);
+          const now = new Date();
+          await utimes(lockPath, now, now);
         } catch {
           // Ignore
         }
@@ -304,7 +312,7 @@ describe("withLock - Stale Lock Detection", () => {
       } finally {
         clearInterval(interval);
         try {
-          await unlink(lockPath);
+          await rm(lockPath, { recursive: true, force: true });
         } catch {
           // Ignore
         }
@@ -336,7 +344,7 @@ describe("withLock - Async Operations", () => {
     await withTempDir("lock-maintain", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       let lockExistedMidway = false;
 
@@ -431,17 +439,20 @@ describe("withLock - Options", () => {
     await withTempDir("lock-retries", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       // Create blocking lock
-      await writeFile(lockPath, "999999");
+      await mkdir(lockPath);
+      await writeFile(join(lockPath, "pid"), "999999");
 
       const startTime = Date.now();
 
       // Keep lock fresh
+      const { utimes } = await import("node:fs/promises");
       const interval = setInterval(async () => {
         try {
-          await writeFile(lockPath, "999999");
+          const now = new Date();
+          await utimes(lockPath, now, now);
         } catch {
           // Ignore
         }
@@ -459,7 +470,7 @@ describe("withLock - Options", () => {
       } finally {
         clearInterval(interval);
         try {
-          await unlink(lockPath);
+          await rm(lockPath, { recursive: true, force: true });
         } catch {
           // Ignore
         }
@@ -471,15 +482,18 @@ describe("withLock - Options", () => {
     await withTempDir("lock-delay", async (tempDir) => {
       const targetPath = join(tempDir, "test.txt");
       await writeFile(targetPath, "content");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = `${targetPath}.lock.d`;
 
       // Create blocking lock
-      await writeFile(lockPath, "999999");
+      await mkdir(lockPath);
+      await writeFile(join(lockPath, "pid"), "999999");
 
       // Keep lock fresh
+      const { utimes } = await import("node:fs/promises");
       const interval = setInterval(async () => {
         try {
-          await writeFile(lockPath, "999999");
+          const now = new Date();
+          await utimes(lockPath, now, now);
         } catch {
           // Ignore
         }
@@ -498,7 +512,7 @@ describe("withLock - Options", () => {
       } finally {
         clearInterval(interval);
         try {
-          await unlink(lockPath);
+          await rm(lockPath, { recursive: true, force: true });
         } catch {
           // Ignore
         }
