@@ -1,6 +1,6 @@
 import { loadConfig } from "../config.js";
 import { loadMergedPlaybook, loadPlaybook, savePlaybook } from "../playbook.js";
-import { ProcessedLog } from "../tracking.js";
+import { ProcessedLog, getProcessedLogPath } from "../tracking.js";
 import { findUnprocessedSessions, cassExport } from "../cass.js";
 import { generateDiary } from "../diary.js";
 import { reflectOnSession } from "../reflect.js";
@@ -9,7 +9,6 @@ import { curatePlaybook } from "../curate.js";
 import { expandPath, log, warn, error, now } from "../utils.js";
 import { withLock } from "../lock.js";
 import { PlaybookDelta } from "../types.js";
-import path from "node:path";
 import chalk from "chalk";
 
 export async function reflectCommand(
@@ -17,6 +16,7 @@ export async function reflectCommand(
     days?: number;
     maxSessions?: number;
     agent?: string;
+    workspace?: string;
     dryRun?: boolean;
     json?: boolean;
     llm?: boolean;
@@ -31,7 +31,7 @@ export async function reflectCommand(
   }
   
   const globalPath = expandPath(config.playbookPath);
-  const logPath = expandPath(path.join(config.diaryDir, "../reflections/processed.log"));
+  const logPath = expandPath(getProcessedLogPath(options.workspace));
 
   // We must lock the entire reflect process to ensure we don't duplicate work 
   // or overwrite the playbook/processed log with stale data.
@@ -70,7 +70,7 @@ export async function reflectCommand(
       console.log(chalk.dim(`Processing ${sessionPath}...`));
       try {
         const diary = await generateDiary(sessionPath, config);
-        const content = await cassExport(sessionPath, "text", config.cassPath) || "";
+        const content = await cassExport(sessionPath, "text", config.cassPath, config) || "";
         
         if (content.length < 50) {
           warn(`Skipping empty session: ${sessionPath}`);

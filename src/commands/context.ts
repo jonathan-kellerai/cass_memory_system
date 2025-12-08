@@ -190,7 +190,7 @@ export async function generateContextResult(
     limit: flags.history || config.maxHistoryInContext,
     days: flags.days || config.sessionLookbackDays,
     workspace: flags.workspace
-  }, config.cassPath);
+  }, config.cassPath, config);
 
   const warnings: string[] = [];
   const historyWarnings = checkDeprecatedPatterns(cassHits, playbook.deprecatedPatterns);
@@ -367,7 +367,7 @@ export async function getContext(
     limit: flags.history || config.maxHistoryInContext,
     days: flags.days || config.sessionLookbackDays,
     workspace: flags.workspace
-  }, config.cassPath);
+  }, config.cassPath, config);
 
   const warnings: string[] = [];
   const historyWarnings = checkDeprecatedPatterns(cassHits, playbook.deprecatedPatterns);

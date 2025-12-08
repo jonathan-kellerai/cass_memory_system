@@ -32,7 +32,8 @@ import {
   expandPath,
   log,
   warn,
-  error as logError
+  error as logError,
+  atomicWrite
 } from "./utils.js";
 
 // --- Helpers ---
@@ -131,7 +132,7 @@ async function enrichWithRelatedSessions(
   const hits = await safeCassSearch(query, {
     limit: 5,
     days: config.sessionLookbackDays,
-  }, config.cassPath);
+  }, config.cassPath, config);
 
   // 3. Filter and Format
   const related: RelatedSession[] = hits
@@ -160,7 +161,7 @@ export async function generateDiary(
   log(`Generating diary for ${sessionPath}...`);
 
   // 1. Export Session
-  const rawContent = await cassExport(sessionPath, "markdown", config.cassPath);
+  const rawContent = await cassExport(sessionPath, "markdown", config.cassPath, config);
   if (!rawContent) {
     throw new Error(`Failed to export session: ${sessionPath}`);
   }
@@ -251,9 +252,7 @@ export async function generateDiary(
 
 export async function saveDiary(diary: DiaryEntry, config: Config): Promise<void> {
   const diaryPath = path.join(expandPath(config.diaryDir), `${diary.id}.json`);
-  await ensureDir(path.dirname(diaryPath));
-  
-  await fs.writeFile(diaryPath, JSON.stringify(diary, null, 2));
+  await atomicWrite(diaryPath, JSON.stringify(diary, null, 2));
   log(`Saved diary to ${diaryPath}`);
 }
 
