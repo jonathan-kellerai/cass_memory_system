@@ -40,6 +40,8 @@ export const DEFAULT_CONFIG: Config = {
   sanitization: {
     enabled: true,
     extraPatterns: [],
+    auditLog: false,
+    auditLevel: "info",
   },
 };
 

@@ -1,56 +1,51 @@
-/**
- * src/types.ts - Complete TypeScript interfaces + Zod schemas for cass-memory
- * This is the core type system - everything depends on it
- */
-
-import { z } from 'zod';
+import { z } from "zod";
 
 // ============================================================================
 // ENUMS & CONSTANTS
 // ============================================================================
 
 export const HarmfulReasonEnum = z.enum([
-  'caused_bug',
-  'wasted_time',
-  'contradicted_requirements',
-  'wrong_context',
-  'outdated',
-  'other'
+  "caused_bug",
+  "wasted_time",
+  "contradicted_requirements",
+  "wrong_context",
+  "outdated",
+  "other"
 ]);
 export type HarmfulReason = z.infer<typeof HarmfulReasonEnum>;
 
-export const SessionStatusEnum = z.enum(['success', 'failure', 'mixed']);
+export const SessionStatusEnum = z.enum(["success", "failure", "mixed"]);
 export type SessionStatus = z.infer<typeof SessionStatusEnum>;
 
-export const BulletScopeEnum = z.enum(['global', 'workspace', 'language', 'framework', 'task']);
+export const BulletScopeEnum = z.enum(["global", "workspace", "language", "framework", "task"]);
 export type BulletScope = z.infer<typeof BulletScopeEnum>;
 
-export const BulletTypeEnum = z.enum(['rule', 'anti-pattern']);
+export const BulletTypeEnum = z.enum(["rule", "anti-pattern"]);
 export type BulletType = z.infer<typeof BulletTypeEnum>;
 
 export const BulletKindEnum = z.enum([
-  'project_convention',
-  'stack_pattern',
-  'workflow_rule',
-  'anti_pattern'
+  "project_convention",
+  "stack_pattern",
+  "workflow_rule",
+  "anti_pattern"
 ]);
 export type BulletKind = z.infer<typeof BulletKindEnum>;
 
-export const BulletStateEnum = z.enum(['draft', 'active', 'retired']);
+export const BulletStateEnum = z.enum(["draft", "active", "retired"]);
 export type BulletState = z.infer<typeof BulletStateEnum>;
 
-export const BulletMaturityEnum = z.enum(['candidate', 'established', 'proven', 'deprecated']);
+export const BulletMaturityEnum = z.enum(["candidate", "established", "proven", "deprecated"]);
 export type BulletMaturity = z.infer<typeof BulletMaturityEnum>;
 
-export const LLMProviderEnum = z.enum(['openai', 'anthropic', 'google']);
+export const LLMProviderEnum = z.enum(["openai", "anthropic", "google"]);
 export type LLMProvider = z.infer<typeof LLMProviderEnum>;
 
 // ============================================================================
-// FEEDBACK EVENT (Critical for confidence decay - P1)
+// FEEDBACK EVENT
 // ============================================================================
 
 export const FeedbackEventSchema = z.object({
-  type: z.enum(['helpful', 'harmful']),
+  type: z.enum(["helpful", "harmful"]),
   timestamp: z.string(),
   sessionPath: z.string().optional(),
   reason: HarmfulReasonEnum.optional(),
@@ -60,28 +55,27 @@ export const FeedbackEventSchema = z.object({
 export type FeedbackEvent = z.infer<typeof FeedbackEventSchema>;
 
 // ============================================================================
-// PLAYBOOK BULLET (Enhanced with all innovations)
+// PLAYBOOK BULLET
 // ============================================================================
 
 export const PlaybookBulletSchema = z.object({
   id: z.string(),
-  scope: BulletScopeEnum.default('global'),
+  scope: BulletScopeEnum.default("global"),
   scopeKey: z.string().optional(),
   workspace: z.string().optional(),
   category: z.string(),
   content: z.string(),
   searchPointer: z.string().optional(),
-  type: BulletTypeEnum.default('rule'),
+  type: BulletTypeEnum.default("rule"),
   isNegative: z.boolean().default(false),
-  kind: BulletKindEnum.default('stack_pattern'),
-  state: BulletStateEnum.default('draft'),
-  maturity: BulletMaturityEnum.default('candidate'),
+  kind: BulletKindEnum.default("stack_pattern"),
+  state: BulletStateEnum.default("draft"),
+  maturity: BulletMaturityEnum.default("candidate"),
   promotedAt: z.string().optional(),
   helpfulCount: z.number().default(0),
   harmfulCount: z.number().default(0),
-  feedbackEvents: z.array(FeedbackEventSchema).default([]), // Combined events
-  helpfulEvents: z.array(FeedbackEventSchema).default([]),
-  harmfulEvents: z.array(FeedbackEventSchema).default([]),
+  // Removed redundant helpfulEvents/harmfulEvents arrays
+  feedbackEvents: z.array(FeedbackEventSchema).default([]), 
   lastValidatedAt: z.string().optional(),
   confidenceDecayHalfLifeDays: z.number().default(90),
   createdAt: z.string(),
@@ -96,12 +90,13 @@ export const PlaybookBulletSchema = z.object({
   reasoning: z.string().optional(),
   tags: z.array(z.string()).default([]),
   embedding: z.array(z.number()).optional(),
-  effectiveScore: z.number().optional() // Cached computed score
+  effectiveScore: z.number().optional(),
+  deprecatedAt: z.string().optional()
 });
 export type PlaybookBullet = z.infer<typeof PlaybookBulletSchema>;
 
 // ============================================================================
-// NEW BULLET DATA (for delta operations)
+// NEW BULLET DATA
 // ============================================================================
 
 export const NewBulletDataSchema = z.object({
@@ -109,50 +104,52 @@ export const NewBulletDataSchema = z.object({
   content: z.string(),
   tags: z.array(z.string()).optional().default([]),
   searchPointer: z.string().optional(),
-  scope: BulletScopeEnum.optional().default('global'),
+  scope: BulletScopeEnum.optional().default("global"),
   workspace: z.string().optional(),
-  kind: BulletKindEnum.optional().default('stack_pattern'),
-  type: BulletTypeEnum.optional().default('rule')
+  kind: BulletKindEnum.optional().default("stack_pattern"),
+  type: BulletTypeEnum.optional().default("rule"),
+  isNegative: z.boolean().optional().default(false)
 });
 export type NewBulletData = z.infer<typeof NewBulletDataSchema>;
 
 // ============================================================================
-// PLAYBOOK DELTA (for incremental updates)
+// PLAYBOOK DELTA
 // ============================================================================
 
-export const PlaybookDeltaSchema = z.discriminatedUnion('type', [
+export const PlaybookDeltaSchema = z.discriminatedUnion("type", [
   z.object({
-    type: z.literal('add'),
+    type: z.literal("add"),
     bullet: NewBulletDataSchema,
     reason: z.string(),
     sourceSession: z.string()
   }),
   z.object({
-    type: z.literal('helpful'),
+    type: z.literal("helpful"),
     bulletId: z.string(),
-    sourceSession: z.string().optional()
+    sourceSession: z.string().optional(),
+    context: z.string().optional()
   }),
   z.object({
-    type: z.literal('harmful'),
+    type: z.literal("harmful"),
     bulletId: z.string(),
     sourceSession: z.string().optional(),
     reason: HarmfulReasonEnum.optional(),
     context: z.string().optional()
   }),
   z.object({
-    type: z.literal('replace'),
+    type: z.literal("replace"),
     bulletId: z.string(),
     newContent: z.string(),
     reason: z.string()
   }),
   z.object({
-    type: z.literal('deprecate'),
+    type: z.literal("deprecate"),
     bulletId: z.string(),
     reason: z.string(),
     replacedBy: z.string().optional()
   }),
   z.object({
-    type: z.literal('merge'),
+    type: z.literal("merge"),
     bulletIds: z.array(z.string()),
     mergedContent: z.string(),
     reason: z.string()
@@ -161,7 +158,7 @@ export const PlaybookDeltaSchema = z.discriminatedUnion('type', [
 export type PlaybookDelta = z.infer<typeof PlaybookDeltaSchema>;
 
 // ============================================================================
-// DEPRECATED PATTERN (Tombstone mechanism)
+// DEPRECATED PATTERN
 // ============================================================================
 
 export const DeprecatedPatternSchema = z.object({
@@ -186,8 +183,8 @@ export type PlaybookMetadata = z.infer<typeof PlaybookMetadataSchema>;
 
 export const PlaybookSchema = z.object({
   schema_version: z.number().default(2),
-  name: z.string().default('playbook'),
-  description: z.string().default('Auto-generated by cass-memory'),
+  name: z.string().default("playbook"),
+  description: z.string().default("Auto-generated by cass-memory"),
   metadata: PlaybookMetadataSchema,
   deprecatedPatterns: z.array(DeprecatedPatternSchema).default([]),
   bullets: z.array(PlaybookBulletSchema).default([])
@@ -195,7 +192,7 @@ export const PlaybookSchema = z.object({
 export type Playbook = z.infer<typeof PlaybookSchema>;
 
 // ============================================================================
-// RELATED SESSION (for cross-agent enrichment)
+// RELATED SESSION
 // ============================================================================
 
 export const RelatedSessionSchema = z.object({
@@ -207,7 +204,7 @@ export const RelatedSessionSchema = z.object({
 export type RelatedSession = z.infer<typeof RelatedSessionSchema>;
 
 // ============================================================================
-// DIARY ENTRY (Working Memory)
+// DIARY ENTRY
 // ============================================================================
 
 export const DiaryEntrySchema = z.object({
@@ -233,14 +230,12 @@ export type DiaryEntry = z.infer<typeof DiaryEntrySchema>;
 // CONFIGURATION
 // ============================================================================
 
-// Sanitization configuration (extraPatterns are strings in config, compiled to RegExp at runtime)
 export const SanitizationConfigSchema = z.object({
   enabled: z.boolean().default(true),
   extraPatterns: z.array(z.string()).default([])
 });
 export type SanitizationConfig = z.infer<typeof SanitizationConfigSchema>;
 
-// Scoring configuration section
 export const ScoringConfigSectionSchema = z.object({
   decayHalfLifeDays: z.number().default(90),
   harmfulMultiplier: z.number().default(4),
@@ -252,19 +247,19 @@ export type ScoringConfigSection = z.infer<typeof ScoringConfigSectionSchema>;
 
 export const ConfigSchema = z.object({
   schema_version: z.number().default(1),
-  // Nested LLM config (preferred)
+  // Nested LLM config
   llm: z.object({
-    provider: z.string().default('anthropic'),
-    model: z.string().default('claude-sonnet-4-20250514')
+    provider: z.string().default("anthropic"),
+    model: z.string().default("claude-sonnet-4-20250514")
   }).optional(),
   // Flat config (backwards compatibility)
-  provider: LLMProviderEnum.default('anthropic'),
-  model: z.string().default('claude-sonnet-4-20250514'),
+  provider: LLMProviderEnum.default("anthropic"),
+  model: z.string().default("claude-sonnet-4-20250514"),
   // Paths
-  cassPath: z.string().default('cass'),
-  playbookPath: z.string().default('~/.cass-memory/playbook.yaml'),
-  diaryDir: z.string().default('~/.cass-memory/diary'),
-  diaryPath: z.string().optional(), // Alias for diaryDir
+  cassPath: z.string().default("cass"),
+  playbookPath: z.string().default("~/.cass-memory/playbook.yaml"),
+  diaryDir: z.string().default("~/.cass-memory/diary"),
+  diaryPath: z.string().optional(),
   scoring: ScoringConfigSectionSchema.default({}),
   // Reflector settings
   maxReflectorIterations: z.number().default(3),
@@ -278,7 +273,7 @@ export const ConfigSchema = z.object({
   maxHistoryInContext: z.number().default(10),
   sessionLookbackDays: z.number().default(7),
   validationLookbackDays: z.number().default(90),
-  // Feature flags
+  // Flags
   validationEnabled: z.boolean().default(true),
   enrichWithCrossAgent: z.boolean().default(true),
   semanticSearchEnabled: z.boolean().default(false),
@@ -312,7 +307,7 @@ export const CassSearchHitSchema = z.object({
 }));
 export type CassSearchHit = z.infer<typeof CassSearchHitSchema>;
 
-// Aliases for backwards compatibility
+// Aliases
 export const CassHitSchema = CassSearchHitSchema;
 export type CassHit = CassSearchHit;
 
@@ -332,7 +327,7 @@ export const CassSearchOptionsSchema = z.object({
 export type CassSearchOptions = z.infer<typeof CassSearchOptionsSchema>;
 
 // ============================================================================
-// CONTEXT OUTPUT (Pre-task hydration result)
+// CONTEXT OUTPUT
 // ============================================================================
 
 export const ScoredBulletSchema = PlaybookBulletSchema.extend({
@@ -354,13 +349,13 @@ export const ContextResultSchema = z.object({
 export type ContextResult = z.infer<typeof ContextResultSchema>;
 
 // ============================================================================
-// VALIDATION TYPES (Scientific validation)
+// VALIDATION TYPES
 // ============================================================================
 
 export const EvidenceGateResultSchema = z.object({
   passed: z.boolean(),
   reason: z.string(),
-  suggestedState: z.enum(['draft', 'active', 'retired']).optional(),
+  suggestedState: z.enum(["draft", "active", "retired"]).optional(),
   sessionCount: z.number(),
   successCount: z.number(),
   failureCount: z.number()
@@ -376,92 +371,18 @@ export const ValidationEvidenceSchema = z.object({
 export type ValidationEvidence = z.infer<typeof ValidationEvidenceSchema>;
 
 export const ValidationResultSchema = z.object({
-  delta: PlaybookDeltaSchema,
-  approved: z.boolean(),
-  supportingEvidence: z.array(ValidationEvidenceSchema),
-  contradictingEvidence: z.array(ValidationEvidenceSchema),
-  reason: z.string()
+  delta: PlaybookDeltaSchema.optional(),
+  valid: z.boolean(),
+  verdict: z.enum(["ACCEPT", "REJECT", "ACCEPT_WITH_CAUTION"]),
+  confidence: z.number().min(0).max(1),
+  reason: z.string(),
+  evidence: z.array(z.string()), // Citations
+  refinedRule: z.string().optional(),
 });
 export type ValidationResult = z.infer<typeof ValidationResultSchema>;
 
 // ============================================================================
-// HEALTH CHECK TYPES
-// ============================================================================
-
-export const HealthCheckSchema = z.object({
-  category: z.enum(['cass', 'storage', 'llm', 'config', 'self_test']),
-  name: z.string(),
-  status: z.enum(['pass', 'warn', 'fail']),
-  message: z.string(),
-  details: z.record(z.unknown()).optional()
-});
-export type HealthCheck = z.infer<typeof HealthCheckSchema>;
-
-export const HealthCheckResultSchema = z.object({
-  overall: z.enum(['healthy', 'degraded', 'unhealthy']),
-  checks: z.array(HealthCheckSchema),
-  warnings: z.array(z.string()),
-  errors: z.array(z.string())
-});
-export type HealthCheckResult = z.infer<typeof HealthCheckResultSchema>;
-
-// ============================================================================
-// COMMAND RESULT & ERROR TYPES
-// ============================================================================
-
-export const CommandResultSchema = z.object({
-  success: z.boolean(),
-  message: z.string().optional(),
-  data: z.unknown().optional(),
-  error: z.string().optional()
-});
-export type CommandResult = z.infer<typeof CommandResultSchema>;
-
-export const CMErrorCodeEnum = z.enum([
-  'CASS_NOT_FOUND',
-  'CASS_INDEX_STALE',
-  'CASS_SEARCH_FAILED',
-  'PLAYBOOK_CORRUPT',
-  'PLAYBOOK_NOT_FOUND',
-  'CONFIG_INVALID',
-  'LLM_API_ERROR',
-  'LLM_RATE_LIMIT',
-  'LLM_BUDGET_EXCEEDED',
-  'SANITIZATION_FAILED',
-  'FILE_NOT_FOUND',
-  'PERMISSION_DENIED',
-  'INVALID_INPUT',
-  'UNKNOWN_ERROR'
-]);
-export type CMErrorCode = z.infer<typeof CMErrorCodeEnum>;
-
-export const CMErrorSchema = z.object({
-  code: CMErrorCodeEnum,
-  message: z.string(),
-  details: z.record(z.unknown()).optional(),
-  recoverable: z.boolean().default(true)
-});
-export type CMError = z.infer<typeof CMErrorSchema>;
-
-// ============================================================================
-// EXIT CODES
-// ============================================================================
-
-export const EXIT_CODES = {
-  SUCCESS: 0,
-  GENERAL_ERROR: 1,
-  INVALID_ARGS: 2,
-  CONFIG_ERROR: 3,
-  CASS_ERROR: 4,
-  LLM_ERROR: 5,
-  FILE_ERROR: 6,
-  PERMISSION_ERROR: 7,
-  BUDGET_EXCEEDED: 8
-} as const;
-export type ExitCode = typeof EXIT_CODES[keyof typeof EXIT_CODES];
-
-// ============================================================================
-// PROCESSED LOG (Tracking reflected sessions)
+// PROCESSED LOG
 // ============================================================================
 
 export const ProcessedEntrySchema = z.object({
@@ -473,22 +394,58 @@ export const ProcessedEntrySchema = z.object({
 export type ProcessedEntry = z.infer<typeof ProcessedEntrySchema>;
 
 // ============================================================================
-// REFLECTION & PLAYBOOK STATS
+// REPORTS
 // ============================================================================
 
-export const ReflectionStatsSchema = z.object({
-  sessionsProcessed: z.number(),
-  diariesGenerated: z.number(),
-  deltasProposed: z.number(),
-  deltasApplied: z.number(),
-  deltasRejected: z.number(),
-  bulletsAdded: z.number(),
-  bulletsMerged: z.number(),
-  bulletsDeprecated: z.number(),
-  duration: z.number(),
-  timestamp: z.string()
+export const ConflictReportSchema = z.object({
+  newBulletContent: z.string(),
+  conflictingBulletId: z.string(),
+  conflictingContent: z.string(),
+  reason: z.string(),
 });
-export type ReflectionStats = z.infer<typeof ReflectionStatsSchema>;
+export type ConflictReport = z.infer<typeof ConflictReportSchema>;
+
+export const PromotionReportSchema = z.object({
+  bulletId: z.string(),
+  from: BulletMaturitySchema,
+  to: BulletMaturitySchema,
+  reason: z.string().optional(),
+});
+export type PromotionReport = z.infer<typeof PromotionReportSchema>;
+
+export const InversionReportSchema = z.object({
+  originalId: z.string(),
+  originalContent: z.string(),
+  antiPatternId: z.string(),
+  antiPatternContent: z.string(),
+  bulletId: z.string().optional(),
+});
+export type InversionReport = z.infer<typeof InversionReportSchema>;
+
+export const CurationResultSchema = z.object({
+  playbook: PlaybookSchema,
+  applied: z.number(),
+  skipped: z.number(),
+  conflicts: z.array(ConflictReportSchema),
+  promotions: z.array(PromotionReportSchema),
+  inversions: z.array(InversionReportSchema),
+  pruned: z.number(),
+});
+export type CurationResult = z.infer<typeof CurationResultSchema>;
+
+// ============================================================================
+// SEARCH PLAN
+// ============================================================================
+
+export const SearchPlanSchema = z.object({
+  queries: z.array(z.string()).max(5),
+  keywords: z.array(z.string())
+});
+export type SearchPlan = z.infer<typeof SearchPlanSchema>;
+
+// ============================================================================
+// STATS
+// ============================================================================
 
 export const PlaybookStatsSchema = z.object({
   total: z.number(),
@@ -515,37 +472,19 @@ export const PlaybookStatsSchema = z.object({
 });
 export type PlaybookStats = z.infer<typeof PlaybookStatsSchema>;
 
-// ============================================================================
-// SEARCH PLAN (for context generation)
-// ============================================================================
-
-export const SearchPlanSchema = z.object({
-  queries: z.array(z.string()).max(5),
-  keywords: z.array(z.string())
+export const ReflectionStatsSchema = z.object({
+  sessionsProcessed: z.number(),
+  diariesGenerated: z.number(),
+  deltasProposed: z.number(),
+  deltasApplied: z.number(),
+  deltasRejected: z.number(),
+  bulletsAdded: z.number(),
+  bulletsMerged: z.number(),
+  bulletsDeprecated: z.number(),
+  duration: z.number(),
+  timestamp: z.string()
 });
-export type SearchPlan = z.infer<typeof SearchPlanSchema>;
-
-// ============================================================================
-// EXPORTED SCHEMAS (for LLM generateObject)
-// ============================================================================
-
-export interface InversionReport {
-  originalId: string;
-  originalContent: string;
-  newId: string;
-  invertedContent: string;
-  reason: string;
-}
-
-export interface CurationResult {
-  playbook: Playbook;
-  applied: number;
-  skipped: number;
-  conflicts: string[];
-  promotions: string[];
-  inversions: InversionReport[];
-  pruned: number;
-}
+export type ReflectionStats = z.infer<typeof ReflectionStatsSchema>;
 
 export const Schemas = {
   FeedbackEvent: FeedbackEventSchema,
@@ -557,7 +496,6 @@ export const Schemas = {
   Config: ConfigSchema,
   ContextResult: ContextResultSchema,
   ValidationResult: ValidationResultSchema,
-  HealthCheckResult: HealthCheckResultSchema,
   SearchPlan: SearchPlanSchema,
   PlaybookStats: PlaybookStatsSchema,
   ReflectionStats: ReflectionStatsSchema
