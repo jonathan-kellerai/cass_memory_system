@@ -1,8 +1,15 @@
-import { loadConfig, saveConfig } from "../config.js";
-import { loadMergedPlaybook, savePlaybook, findBullet } from "../playbook.js";
+import { loadConfig } from "../config.js";
+import {
+  loadMergedPlaybook,
+  loadPlaybook,
+  loadPlaybookFromPath,
+  savePlaybook,
+  findBullet,
+} from "../playbook.js";
 import { getEffectiveScore, calculateMaturityState } from "../scoring.js";
 import { now, error as logError, expandPath } from "../utils.js";
 import chalk from "chalk";
+import { HarmfulReason } from "../types.js";
 
 export async function markCommand(
   bulletId: string,
@@ -21,39 +28,25 @@ export async function markCommand(
   // For now, let's assume global playbook for V1 or intelligent save in playbook.ts.
   // Let's load the actual file containing the bullet.
   
-  // Strategy: Load global. If found, update global. Else load repo. If found, update repo.
-  let playbook = await loadMergedPlaybook(config);
-  const bullet = findBullet(playbook, bulletId);
-  
-  if (!bullet) {
+  // Strategy: search merged for existence, then update whichever file actually contains the bullet.
+  const merged = await loadMergedPlaybook(config);
+  const mergedBullet = findBullet(merged, bulletId);
+  if (!mergedBullet) {
     logError(`Bullet not found: ${bulletId}`);
     process.exit(1);
   }
 
-  // Determine source file (Global vs Repo)
-  // Ideally bullet has a source flag or we check again.
-  // Hack for V1: Just load global, check if there. If not, assume repo.
-  // Better: loadMergedPlaybook should handle saving? No, it returns a merged object.
-  
-  // Reload strictly for saving
-  // Check Global
   const globalPath = expandPath(config.playbookPath);
-  const fs = await import("node:fs/promises"); // dynamic import or top level
-  // re-import loadPlaybook
-  const { loadPlaybook } = await import("../playbook.js");
-  
-  let targetPlaybook = await loadPlaybook(config.playbookPath);
+  const repoPath = expandPath(".cass/playbook.yaml");
+
+  let targetPlaybook = await loadPlaybook(config);
   let targetBullet = findBullet(targetPlaybook, bulletId);
-  let savePath = config.playbookPath;
+  let saveTarget: string | Config = config;
 
   if (!targetBullet) {
-    // Check Repo
-    // detect repo context logic duplicated here?
-    // Let's assume .cass/playbook.yaml for now
-    const repoPath = ".cass/playbook.yaml";
-    targetPlaybook = await loadPlaybook(repoPath);
+    targetPlaybook = await loadPlaybookFromPath(repoPath);
     targetBullet = findBullet(targetPlaybook, bulletId);
-    savePath = repoPath;
+    saveTarget = repoPath;
   }
 
   if (!targetBullet) {
@@ -63,15 +56,27 @@ export async function markCommand(
 
   // Apply Update
   const type = flags.helpful ? "helpful" : "harmful";
-  targetBullet.feedbackEvents.push({
-    type,
-    timestamp: now(),
-    sessionPath: flags.session,
-    reason: flags.reason
-  });
+  const reason: HarmfulReason | undefined =
+    type === "harmful"
+      ? (["caused_bug","wasted_time","contradicted_requirements","wrong_context","outdated","other"] as const)
+          .includes((flags.reason ?? "other") as HarmfulReason)
+          ? (flags.reason as HarmfulReason)
+          : "other"
+      : undefined;
 
-  if (flags.helpful) targetBullet.helpfulCount++;
-  else targetBullet.harmfulCount++;
+  const event = { type, timestamp: now(), sessionPath: flags.session, reason };
+
+  if (type === "helpful") {
+    targetBullet.helpfulEvents.push(event);
+    targetBullet.helpfulCount++;
+  } else {
+    targetBullet.harmfulEvents.push(event);
+    targetBullet.harmfulCount++;
+  }
+
+  // Maintain legacy combined list for compatibility
+  targetBullet.feedbackEvents = targetBullet.feedbackEvents || [];
+  targetBullet.feedbackEvents.push(event);
 
   targetBullet.updatedAt = now();
   
