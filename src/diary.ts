@@ -271,14 +271,14 @@ async function exportSessionSafe(sessionPath: string, cassPath: string): Promise
  * @returns Human-readable formatted string
  *
  * @example
- * // JSONL input
+ * // JSONL input (single message)
  * const formatted = formatRawSession('{"role":"user","content":"Hello"}', '.jsonl');
- * // Returns: "**user**: Hello\n\n"
+ * // Returns: "**user**: Hello"
  *
  * @example
- * // JSON input
- * const formatted = formatRawSession('{"messages":[{"role":"user","content":"Hi"}]}', '.json');
- * // Returns: "**user**: Hi\n\n"
+ * // JSON input (multiple messages separated by blank lines)
+ * const formatted = formatRawSession('{"messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello!"}]}', '.json');
+ * // Returns: "**user**: Hi\n\n**assistant**: Hello!"
  */
 export function formatRawSession(content: string, ext: string): string {
   // Normalize extension (handle with or without leading dot)

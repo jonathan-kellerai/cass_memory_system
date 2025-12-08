@@ -324,9 +324,15 @@ export async function llmWithRetry<T>(
       return await operation();
     } catch (err: any) {
       attempt++;
-      const isRetryable = LLM_RETRY_CONFIG.retryableErrors.some(e => 
-        err.message?.toLowerCase().includes(e) || err.code?.toString().includes(e) || err.statusCode?.toString().includes(e)
-      );
+      const isRetryable = LLM_RETRY_CONFIG.retryableErrors.some(e => {
+        const lowerE = e.toLowerCase();
+        // Message matching: case-insensitive (both sides lowercased)
+        const messageMatch = err.message?.toLowerCase().includes(lowerE);
+        // Code/statusCode matching: case-sensitive (e.g., "ETIMEDOUT" must match exactly)
+        const codeMatch = err.code?.toString().includes(e);
+        const statusMatch = err.statusCode?.toString().includes(e);
+        return messageMatch || codeMatch || statusMatch;
+      });
       
       if (!isRetryable || attempt > LLM_RETRY_CONFIG.maxRetries) {
         throw err;

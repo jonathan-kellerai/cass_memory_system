@@ -158,6 +158,24 @@ describe("llmWithRetry", () => {
     expect(result).toBe("reconnected");
   });
 
+  it("retries on ETIMEDOUT in message (not just code)", async () => {
+    // This tests the bug fix: uppercase patterns like "ETIMEDOUT" should match
+    // when they appear in the error message, not just in err.code
+    let attempt = 0;
+    const operation = mock(() => {
+      attempt++;
+      if (attempt < 2) {
+        // Error with ETIMEDOUT in message but NO err.code set
+        return Promise.reject(new Error("Request failed: ETIMEDOUT"));
+      }
+      return Promise.resolve("recovered");
+    });
+
+    const result = await llmWithRetry(operation, "messageMatchOp");
+    expect(result).toBe("recovered");
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+
   it("retries up to maxRetries times then throws", async () => {
     const operation = mock(() => Promise.reject(new Error("rate_limit_exceeded")));
 
