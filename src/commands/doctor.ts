@@ -1,9 +1,10 @@
 import { loadConfig } from "../config.js";
 import { cassAvailable, cassStats } from "../cass.js";
-import { fileExists } from "../utils.js";
+import { fileExists, resolveRepoDir } from "../utils.js";
 import { isLLMAvailable } from "../llm.js";
 import { SECRET_PATTERNS, compileExtraPatterns } from "../security.js";
 import chalk from "chalk";
+import path from "node:path";
 
 type CheckStatus = "pass" | "warn" | "fail";
 type OverallStatus = "healthy" | "degraded" | "unhealthy";
