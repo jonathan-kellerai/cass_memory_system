@@ -245,6 +245,65 @@ function deduplicateDeltas(
 }
 
 // ============================================================================
+// EARLY EXIT LOGIC
+// ============================================================================
+
+/** Maximum deltas to collect before stopping iteration */
+const MAX_DELTAS = 20;
+
+/**
+ * Determine if reflector should exit early (skip remaining iterations).
+ *
+ * Exit conditions:
+ * 1. No new deltas this iteration → LLM has exhausted insights
+ * 2. Already have MAX_DELTAS (20) → Diminishing returns
+ * 3. Reached maxReflectorIterations → Hard limit
+ *
+ * This saves LLM calls when early iterations capture everything.
+ *
+ * @param iteration - Current iteration (0-indexed)
+ * @param deltasThisIteration - Number of new deltas from this iteration
+ * @param totalDeltas - Total deltas accumulated so far
+ * @param config - Configuration with maxReflectorIterations
+ * @returns true if should stop iterating, false to continue
+ *
+ * @example
+ * // Iteration 0: 15 deltas → continue (false)
+ * shouldExitEarly(0, 15, 15, config) // → false
+ *
+ * // Iteration 1: 0 deltas → exit (true)
+ * shouldExitEarly(1, 0, 15, config) // → true
+ *
+ * // Iteration 0: 12 deltas, then iteration 1: 8 deltas → exit (hit max 20)
+ * shouldExitEarly(1, 8, 20, config) // → true
+ */
+export function shouldExitEarly(
+  iteration: number,
+  deltasThisIteration: number,
+  totalDeltas: number,
+  config: Config
+): boolean {
+  const maxIterations = config.maxReflectorIterations ?? 3;
+
+  // Condition 1: No new deltas this iteration - LLM has exhausted insights
+  if (deltasThisIteration === 0) {
+    return true;
+  }
+
+  // Condition 2: Hit max delta limit - diminishing returns
+  if (totalDeltas >= MAX_DELTAS) {
+    return true;
+  }
+
+  // Condition 3: Reached max iterations (note: iteration is 0-indexed)
+  if (iteration >= maxIterations - 1) {
+    return true;
+  }
+
+  return false;
+}
+
+// ============================================================================
 // MAIN REFLECTION FUNCTION
 // ============================================================================
 
@@ -336,13 +395,8 @@ Don't repeat what's already captured.`;
       const uniqueDeltas = deduplicateDeltas(validDeltas, allDeltas);
       allDeltas.push(...uniqueDeltas);
 
-      // Early exit if no new insights
-      if (uniqueDeltas.length === 0) {
-        break;
-      }
-
-      // Cap total deltas
-      if (allDeltas.length >= 20) {
+      // Check for early exit using centralized logic
+      if (shouldExitEarly(iteration, uniqueDeltas.length, allDeltas.length, config)) {
         break;
       }
     } catch (error) {

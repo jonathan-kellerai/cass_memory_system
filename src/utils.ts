@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import chalk from "chalk";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import type { ContextResult, ScoredBullet, CassSearchHit, PlaybookBullet } from "./types.js";
 
 const execAsync = promisify(exec);
 
@@ -288,6 +289,86 @@ export function extractAgentFromPath(sessionPath: string): string {
   return "unknown";
 }
 
+/**
+ * Format the last helpful feedback timestamp for a bullet as human-readable relative time.
+ * Used in context output to help users understand recency of validation.
+ *
+ * @param bullet - PlaybookBullet or object with helpfulEvents/feedbackEvents array
+ * @returns Human-readable string like "2 days ago", "3 weeks ago", or "Never"
+ *
+ * @example
+ * formatLastHelpful({ helpfulEvents: [{ timestamp: '2025-12-05T10:00:00Z' }] })
+ * // Returns: "2 days ago" (if today is 2025-12-07)
+ *
+ * formatLastHelpful({ feedbackEvents: [{ type: 'helpful', timestamp: '2025-12-07T14:00:00Z' }] })
+ * // Returns: "45 minutes ago"
+ *
+ * formatLastHelpful({})
+ * // Returns: "Never"
+ */
+export function formatLastHelpful(bullet: {
+  helpfulEvents?: Array<{ timestamp: string }>;
+  feedbackEvents?: Array<{ type: string; timestamp: string }>;
+}): string {
+  // Find helpful events from either helpfulEvents or feedbackEvents
+  let helpfulTimestamps: string[] = [];
+
+  if (bullet.helpfulEvents && bullet.helpfulEvents.length > 0) {
+    helpfulTimestamps = bullet.helpfulEvents.map(e => e.timestamp);
+  } else if (bullet.feedbackEvents && bullet.feedbackEvents.length > 0) {
+    helpfulTimestamps = bullet.feedbackEvents
+      .filter(e => e.type === "helpful")
+      .map(e => e.timestamp);
+  }
+
+  if (helpfulTimestamps.length === 0) {
+    return "Never";
+  }
+
+  // Find most recent helpful event
+  const sortedTimestamps = helpfulTimestamps
+    .map(ts => new Date(ts).getTime())
+    .filter(ts => !isNaN(ts))
+    .sort((a, b) => b - a); // Descending (most recent first)
+
+  if (sortedTimestamps.length === 0) {
+    return "Never";
+  }
+
+  const mostRecent = sortedTimestamps[0];
+  const diff = Date.now() - mostRecent;
+
+  // Convert to appropriate units
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const weeks = Math.floor(days / 7);
+  const months = Math.floor(days / 30);
+  const years = Math.floor(days / 365);
+
+  // Format based on magnitude (always round down per spec)
+  if (seconds < 60) {
+    return "just now";
+  }
+  if (minutes < 60) {
+    return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
+  }
+  if (hours < 24) {
+    return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+  }
+  if (days < 7) {
+    return days === 1 ? "1 day ago" : `${days} days ago`;
+  }
+  if (weeks < 4) {
+    return weeks === 1 ? "1 week ago" : `${weeks} weeks ago`;
+  }
+  if (months < 12) {
+    return months === 1 ? "1 month ago" : `${months} months ago`;
+  }
+  return years === 1 ? "1 year ago" : `${years} years ago`;
+}
+
 // --- Search Suggestions ---
 
 /**
@@ -406,3 +487,229 @@ export function error(msg: string): void {
 export function warn(msg: string): void {
   console.error(chalk.yellow("[cass-memory] WARNING:"), msg);
 }
+
+// --- Context Formatting ---
+
+/**
+ * Format a ContextResult as human-readable markdown.
+ * Produces portable markdown without ANSI colors for file output, pipes, etc.
+ *
+ * @param result - The structured ContextResult to format
+ * @returns Formatted markdown string ready for display or file output
+ *
+ * @example
+ * const md = formatContextMarkdown(result);
+ * console.log(md); // or write to file
+ */
+export function formatContextMarkdown(result: ContextResult): string {
+  const lines: string[] = [];
+
+  // Header
+  lines.push("═══════════════════════════════════════════════════════════════");
+  lines.push(`CONTEXT FOR: ${result.task}`);
+  lines.push("═══════════════════════════════════════════════════════════════");
+  lines.push("");
+
+  // Relevant Playbook Rules
+  if (result.relevantBullets.length > 0) {
+    lines.push(`## RELEVANT PLAYBOOK RULES (${result.relevantBullets.length})`);
+    lines.push("");
+    for (const bullet of result.relevantBullets) {
+      const score = bullet.effectiveScore?.toFixed(1) ?? "N/A";
+      lines.push(`**[${bullet.id}]** ${bullet.category}/${bullet.kind} (score: ${score})`);
+      lines.push(`  ${truncateSnippet(bullet.content, 300)}`);
+      lines.push("");
+    }
+  } else {
+    lines.push("_(No relevant playbook rules found)_");
+    lines.push("");
+  }
+
+  // Pitfalls to Avoid (Anti-patterns)
+  if (result.antiPatterns.length > 0) {
+    lines.push(`## ⚠️ PITFALLS TO AVOID (${result.antiPatterns.length})`);
+    lines.push("");
+    for (const bullet of result.antiPatterns) {
+      lines.push(`**[${bullet.id}]** ${truncateSnippet(bullet.content, 200)}`);
+    }
+    lines.push("");
+  }
+
+  // Historical Context
+  if (result.historySnippets.length > 0) {
+    lines.push(`## HISTORICAL CONTEXT (${result.historySnippets.length} sessions)`);
+    lines.push("");
+    // Show up to 5 history items
+    const displayed = result.historySnippets.slice(0, 5);
+    displayed.forEach((hit, idx) => {
+      const agent = hit.agent || "unknown";
+      const relTime = hit.timestamp ? formatRelativeTime(hit.timestamp) : "";
+      lines.push(`${idx + 1}. ${hit.source_path}:${hit.line_number} (${agent}${relTime ? ", " + relTime : ""})`);
+      const snippet = truncateSnippet(hit.snippet.replace(/\n/g, " ").trim(), 150);
+      lines.push(`   > ${snippet}`);
+      lines.push("");
+    });
+  }
+
+  // Deprecated Warnings
+  if (result.deprecatedWarnings.length > 0) {
+    lines.push("## ⚠️ WARNINGS");
+    lines.push("");
+    for (const warning of result.deprecatedWarnings) {
+      lines.push(`  • ${warning}`);
+    }
+    lines.push("");
+  }
+
+  // Suggested Searches
+  if (result.suggestedCassQueries.length > 0) {
+    lines.push("## DIG DEEPER");
+    lines.push("");
+    for (const query of result.suggestedCassQueries) {
+      lines.push(`  ${query}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Truncate snippet text with ellipsis, preserving word boundaries when possible.
+ */
+function truncateSnippet(text: string, maxLen: number): string {
+  if (!text) return "";
+  if (text.length <= maxLen) return text;
+
+  // Try to break at word boundary
+  const truncated = text.slice(0, maxLen);
+  const lastSpace = truncated.lastIndexOf(" ");
+
+  if (lastSpace > maxLen * 0.7) {
+    return truncated.slice(0, lastSpace) + "...";
+  }
+
+  return truncated.slice(0, maxLen - 3) + "...";
+}
+
+/**
+ * Extended PlaybookBullet type that may include derivedFrom field.
+ * Used for extracting reasoning from rule provenance data.
+ */
+interface BulletWithProvenance {
+  reasoning?: string;
+  derivedFrom?: {
+    sessionPath?: string;
+    timestamp?: string;
+    keyEvidence?: string[];
+    extractedBy?: string;
+  };
+  sourceSessions?: string[];
+  sourceAgents?: string[];
+  createdAt?: string;
+}
+
+/**
+ * Extract reasoning/origin story for why a playbook bullet exists.
+ * Provides context about HOW and WHY a rule was created, helping agents
+ * understand the origin story and give more weight to the guidance.
+ *
+ * Priority order:
+ * 1. bullet.reasoning (if explicitly set)
+ * 2. bullet.derivedFrom.keyEvidence (if derived from session)
+ * 3. Fallback: "From {agent} session on {date}" using session metadata
+ * 4. Final fallback: "No reasoning available"
+ *
+ * @param bullet - PlaybookBullet with optional provenance fields
+ * @returns Human-readable reasoning string (max 200 chars, truncated with ellipsis)
+ *
+ * @example
+ * // With explicit reasoning
+ * extractBulletReasoning({ reasoning: 'JWT expiry caused auth failures' })
+ * // Returns: "JWT expiry caused auth failures"
+ *
+ * // With key evidence
+ * extractBulletReasoning({ derivedFrom: { keyEvidence: ['Token refresh was too slow'] } })
+ * // Returns: "Token refresh was too slow"
+ *
+ * // Fallback to session metadata
+ * extractBulletReasoning({ sourceAgents: ['claude'], createdAt: '2025-11-15T10:00:00Z' })
+ * // Returns: "From claude session on 11/15/2025"
+ */
+export function extractBulletReasoning(bullet: BulletWithProvenance): string {
+  const MAX_LENGTH = 200;
+
+  // 1. Check explicit reasoning field first
+  if (bullet.reasoning && bullet.reasoning.trim()) {
+    return truncateReasoning(bullet.reasoning.trim(), MAX_LENGTH);
+  }
+
+  // 2. Check derivedFrom.keyEvidence
+  if (bullet.derivedFrom?.keyEvidence && bullet.derivedFrom.keyEvidence.length > 0) {
+    // Join evidence items, take first that fits
+    const evidence = bullet.derivedFrom.keyEvidence
+      .filter(e => e && e.trim())
+      .map(e => e.trim());
+
+    if (evidence.length > 0) {
+      // If multiple pieces of evidence, join with semicolon
+      const combined = evidence.join("; ");
+      return truncateReasoning(combined, MAX_LENGTH);
+    }
+  }
+
+  // 3. Fallback to session metadata
+  const agent = bullet.sourceAgents?.[0] || bullet.derivedFrom?.extractedBy;
+  const timestamp = bullet.derivedFrom?.timestamp || bullet.createdAt;
+
+  if (agent || timestamp) {
+    const agentStr = agent || "unknown";
+    const dateStr = timestamp ? formatDateShort(timestamp) : "unknown date";
+    return `From ${agentStr} session on ${dateStr}`;
+  }
+
+  // 4. Final fallback
+  return "No reasoning available";
+}
+
+/**
+ * Truncate reasoning text, preserving first sentence if possible.
+ */
+function truncateReasoning(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+
+  // Try to preserve first sentence
+  const sentenceEnd = text.search(/[.!?]/);
+  if (sentenceEnd > 0 && sentenceEnd < maxLen - 3) {
+    return text.slice(0, sentenceEnd + 1);
+  }
+
+  // Fall back to word boundary truncation
+  const truncated = text.slice(0, maxLen);
+  const lastSpace = truncated.lastIndexOf(" ");
+
+  if (lastSpace > maxLen * 0.7) {
+    return truncated.slice(0, lastSpace) + "...";
+  }
+
+  return truncated.slice(0, maxLen - 3) + "...";
+}
+
+/**
+ * Format a timestamp as a short date string for display.
+ */
+function formatDateShort(isoDate: string): string {
+  try {
+    const date = new Date(isoDate);
+    if (isNaN(date.getTime())) return "unknown date";
+
+    // Format as M/D/YYYY
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const year = date.getFullYear();
+    return `${month}/${day}/${year}`;
+  } catch {
+    return "unknown date";
+  }
+}
+
