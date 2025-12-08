@@ -372,6 +372,7 @@ export async function llmWithRetry<T>(
   }
 }
 
+// Explicitly type monitoredGenerateObject to return GenerateObjectResult<T>
 async function monitoredGenerateObject<T>(
   options: any,
   config: Config,
@@ -384,6 +385,7 @@ async function monitoredGenerateObject<T>(
 
   const result = await generateObject({
     ...options,
+    // Ensure schema is passed through if present in options, typically it is
   }) as GenerateObjectResult<T>;
 
   if (result.usage) {
@@ -424,13 +426,14 @@ export async function generateObjectSafe<T>(
 
       const temperature = attempt > 1 ? 0.35 : 0.3;
 
-      const result = await monitoredGenerateObject<T> ({
+      const result = await monitoredGenerateObject<T>({ 
         model,
         schema,
         prompt: enhancedPrompt,
         temperature
       }, config, "generateObjectSafe");
 
+      // result.object is typed as T now
       return result.object;
     } catch (err: any) {
       lastError = err;
@@ -549,6 +552,7 @@ const ValidatorOutputSchema = z.object({
   suggestedRefinement: z.string().optional().nullable()
 });
 
+// Helper interface for ValidatorOutput
 type ValidatorOutput = z.infer<typeof ValidatorOutputSchema>;
 
 export async function runValidator(
@@ -605,7 +609,7 @@ export async function generateContext(
   config: Config
 ): Promise<string> {
   const llmConfig: LLMConfig = {
-    provider: config.llm?.provider ?? config.provider,
+    provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
     apiKey: config.apiKey
   };
@@ -635,7 +639,7 @@ export async function generateSearchQueries(
   config: Config
 ): Promise<string[]> {
   const llmConfig: LLMConfig = {
-    provider: config.llm?.provider ?? config.provider,
+    provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
     apiKey: config.apiKey
   };
