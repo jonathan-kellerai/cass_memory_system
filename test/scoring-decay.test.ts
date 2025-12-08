@@ -96,11 +96,11 @@ describe("Confidence Decay", () => {
 
   describe("Maturity Transitions", () => {
     test("should promote candidate to established with enough helpful", () => {
-      // Need 3 total events for active/established
+      // Need 3 for established
       const bullet = createTestBullet({
         maturity: "candidate",
         feedbackEvents: Array(3).fill(null).map((_, idx) => 
-          createTestFeedbackEvent("helpful", idx)
+          createTestFeedbackEvent("helpful", idx) // Assuming daysAgo = idx, recent
         )
       });
       
@@ -140,7 +140,7 @@ describe("Confidence Decay", () => {
     });
 
     test("should deprecate if harmful feedback overwhelming", () => {
-      // Need total > 3 to deprecate, otherwise stays candidate
+      // Total > 3 needed for deprecation.
       const bullet = createTestBullet({
         maturity: "established",
         feedbackEvents: [
@@ -172,15 +172,14 @@ describe("Confidence Decay", () => {
     });
 
     test("should return current state if no promotion", () => {
+      // 10 helpful should promote to proven, so current state logic in test was flawed if it expected 'candidate'
       const bullet = createTestBullet({
         maturity: "candidate",
         feedbackEvents: [createTestFeedbackEvent("helpful", 10)]
       });
       
       const result = checkForPromotion(bullet, config);
-      // Already has 10 helpful, but logic says if current is candidate, it can go to proven/established.
-      // Wait, checkForPromotion only returns new state if it's a promotion.
-      // With 10 helpful, it SHOULD go to proven.
+      // Candidate -> Proven is valid promotion
       expect(result).toBe("proven");
     });
   });
