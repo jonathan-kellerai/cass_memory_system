@@ -635,11 +635,12 @@ const FALLBACK_ORDER: LLMProvider[] = ["anthropic", "openai", "google"];
 /**
  * Default model for each provider when used as fallback.
  * These are reliable models with good structured output support.
+ * Using stable, widely-available models to maximize fallback success.
  */
 const FALLBACK_MODELS: Record<LLMProvider, string> = {
-  anthropic: "claude-sonnet-4-20250514",
+  anthropic: "claude-3-5-sonnet-20241022",
   openai: "gpt-4o-mini",
-  google: "gemini-2.0-flash",
+  google: "gemini-1.5-flash",
 };
 
 /**
@@ -696,7 +697,10 @@ export async function llmWithFallback<T>(
   // Collect errors for combined error message
   const errors: Array<{ provider: string; error: string }> = [];
 
-  for (const { provider, model } of providerOrder) {
+  for (let i = 0; i < providerOrder.length; i++) {
+    const { provider, model } = providerOrder[i];
+    const isLastProvider = i === providerOrder.length - 1;
+
     try {
       const llmModel = getModel({ provider, model });
 
@@ -713,8 +717,12 @@ export async function llmWithFallback<T>(
       const errorMsg = err.message || String(err);
       errors.push({ provider, error: errorMsg });
 
-      // Log fallback attempt (but continue trying)
-      console.warn(`[LLM] ${provider} failed: ${errorMsg}. Trying next provider...`);
+      // Log failure with appropriate message
+      if (isLastProvider) {
+        console.warn(`[LLM] ${provider} failed: ${errorMsg}. No more providers to try.`);
+      } else {
+        console.warn(`[LLM] ${provider} failed: ${errorMsg}. Trying next provider...`);
+      }
     }
   }
 

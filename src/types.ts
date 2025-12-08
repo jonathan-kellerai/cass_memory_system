@@ -92,8 +92,10 @@ export type FeedbackEvent = z.infer<typeof FeedbackEventSchema>;
  * Base schema for PlaybookBullet without refinements.
  * Use this for .partial() and .extend() operations.
  */
+const BULLET_ID_PATTERN = /^b-[a-z0-9]+-[a-z0-9]+$/;
+
 export const PlaybookBulletBaseSchema = z.object({
-  id: z.string(),
+  id: z.string().regex(BULLET_ID_PATTERN, "id must match b-{timestamp36}-{random}"),
   scope: BulletScopeEnum.default("global"),
   scopeKey: z.string().optional(),
   workspace: z.string().optional(),
@@ -332,6 +334,38 @@ export const PlaybookSchema = z.object({
   bullets: z.array(PlaybookBulletSchema).default([])
 });
 export type Playbook = z.infer<typeof PlaybookSchema>;
+
+// ----------------------------------------------------------------------------
+// Scope Utilities
+// ----------------------------------------------------------------------------
+
+export interface ScopeContext {
+  workspace?: string;
+  language?: string;
+  framework?: string;
+  task?: string;
+}
+
+export function isBulletInScope(bullet: PlaybookBullet, ctx: ScopeContext): boolean {
+  switch (bullet.scope) {
+    case "global":
+      return true;
+    case "workspace":
+      return !!bullet.workspace && !!ctx.workspace && bullet.workspace === ctx.workspace;
+    case "language":
+      return !!bullet.scopeKey && !!ctx.language && bullet.scopeKey.toLowerCase() === ctx.language.toLowerCase();
+    case "framework":
+      return !!bullet.scopeKey && !!ctx.framework && bullet.scopeKey.toLowerCase() === ctx.framework.toLowerCase();
+    case "task":
+      return !!bullet.scopeKey && !!ctx.task && bullet.scopeKey.toLowerCase() === ctx.task.toLowerCase();
+    default:
+      return true;
+  }
+}
+
+export function filterBulletsByScope(bullets: PlaybookBullet[], ctx: ScopeContext): PlaybookBullet[] {
+  return bullets.filter((b) => isBulletInScope(b, ctx));
+}
 
 // ============================================================================
 // RELATED SESSION
