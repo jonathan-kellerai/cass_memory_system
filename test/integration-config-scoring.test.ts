@@ -20,7 +20,7 @@ import {
   analyzeScoreDistribution
 } from "../src/scoring.js";
 import { withTempCassHome, TestEnv } from "./helpers/temp.js";
-import { createTestBullet, createTestFeedbackEvent, daysAgo } from "./helpers/factories.js";
+import { createTestBullet, createTestFeedbackEvent, daysAgoString } from "./helpers/factories.js";
 
 describe("Integration: Config + Scoring", () => {
   describe("Decay calculation with configurable half-life", () => {

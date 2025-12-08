@@ -166,3 +166,7 @@ export function daysAgo(days: number): string {
   d.setDate(d.getDate() - days);
   return d.toISOString();
 }
+
+export function daysAgoString(days: number): string {
+  return daysAgo(days);
+}
