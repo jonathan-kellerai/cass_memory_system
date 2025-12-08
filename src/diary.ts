@@ -6,12 +6,13 @@ import { extractDiary } from './llm.js';
 import { getSanitizeConfig } from './config.js';
 import { sanitize } from './security.js';
 import { extractAgentFromPath, expandPath, ensureDir, tokenize } from './utils.js';
+import { safeCassSearch } from './cass.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-// ============================================================================
-// SEARCH ANCHOR EXTRACTION
-// ============================================================================
+// ============================================================================//
+// SEARCH ANCHOR EXTRACTION//
+// ============================================================================//
 
 /**
  * Technical terms that should be prioritized as search anchors.
@@ -206,18 +207,31 @@ export async function generateDiary(sessionPath: string, config: Config): Promis
   const sanitizedContent = sanitize(rawContent, sanitizeConfig);
   
   const agent = extractAgentFromPath(sessionPath);
-  // Extract workspace name from path (heuristic: parent dir)
   const workspace = path.basename(path.dirname(sessionPath));
 
   const metadata = { sessionPath, agent, workspace };
   
-  // Extract structured data using LLM
-  const extracted = await extractDiary(
-    ExtractionSchema,
-    sanitizedContent, 
-    metadata,
-    config
-  );
+  const provider = (config.llm?.provider ?? config.provider);
+  const useLLM = (provider as string) !== "none";
+
+  let extracted: z.infer<typeof ExtractionSchema>;
+  
+  if (useLLM) {
+    try {
+      extracted = await extractDiary(
+        ExtractionSchema,
+        sanitizedContent, 
+        metadata,
+        config
+      );
+    } catch (e) {
+      // Fallback to basic extraction if LLM fails
+      console.warn(`LLM extraction failed, falling back to basic: ${e}`);
+      extracted = extractDiaryBasic(sanitizedContent);
+    }
+  } else {
+    extracted = extractDiaryBasic(sanitizedContent);
+  }
 
   const related = await enrichWithRelatedSessions(sanitizedContent, config);
   
@@ -232,18 +246,28 @@ export async function generateDiary(sessionPath: string, config: Config): Promis
     decisions: extracted.decisions || [],
     challenges: extracted.challenges || [],
     preferences: extracted.preferences || [],
-    keyLearnings: extracted.keyLearnings || [],
-    tags: extracted.tags || [],
-    searchAnchors:
-      (extracted.searchAnchors && extracted.searchAnchors.length > 0)
-        ? extracted.searchAnchors
-        : extractSearchAnchors(extracted),
+    keyLearnings: extracted.keyLearnings ?? [],
+    tags: extracted.tags ?? [],
+    searchAnchors: extracted.searchAnchors ?? [],
     relatedSessions: related
   };
   
   await saveDiaryEntry(diary, config);
   
   return diary;
+}
+
+function extractDiaryBasic(content: string): z.infer<typeof ExtractionSchema> {
+  return {
+    status: "mixed",
+    accomplishments: [],
+    decisions: [],
+    challenges: [],
+    preferences: [],
+    keyLearnings: [],
+    tags: ["no-llm"],
+    searchAnchors: extractKeywordsFromContent(content)
+  } as z.infer<typeof ExtractionSchema>;
 }
 
 async function exportSessionSafe(sessionPath: string, cassPath: string): Promise<string> {
@@ -258,9 +282,9 @@ async function exportSessionSafe(sessionPath: string, cassPath: string): Promise
   }
 }
 
-// ============================================================================
-// RAW SESSION FORMATTING
-// ============================================================================
+// ============================================================================//
+// RAW SESSION FORMATTING//
+// ============================================================================//
 
 /**
  * Format raw session files when cass export is unavailable.
@@ -375,9 +399,169 @@ function formatJsonSession(content: string): string {
   }
 }
 
-async function enrichWithRelatedSessions(_content: string, _config: Config): Promise<RelatedSession[]> {
-  // Placeholder for cross-agent enrichment
-  return []; 
+/**
+ * Enrich diary with related sessions from other agents for cross-agent learning.
+ *
+ * Process:
+ * 1. Extract keywords from content using tokenization
+ * 2. Query cass for related sessions using keywords
+ * 3. Filter out sessions from same source path
+ * 4. Score each result by relevance
+ * 5. Return top N most relevant sessions
+ *
+ * @param content - Session content to find related sessions for
+ * @param config - Configuration including cass settings
+ * @param currentSessionPath - Optional path to exclude from results
+ * @returns Array of related sessions with relevance scores
+ */
+async function enrichWithRelatedSessions(
+  content: string,
+  config: Config,
+  currentSessionPath?: string
+): Promise<RelatedSession[]> {
+  // Extract keywords from content
+  const keywords = extractKeywordsFromContent(content);
+
+  if (keywords.length === 0) {
+    return [];
+  }
+
+  // Build search query from top keywords (limit to avoid overly complex queries)
+  const searchQuery = keywords.slice(0, 8).join(" OR ");
+
+  try {
+    // Search for related sessions
+    const hits = await safeCassSearch(searchQuery, {
+      limit: 20, // Get more than we need for filtering
+      days: config.sessionLookbackDays ?? 30,
+    }, config.cassPath);
+
+    if (hits.length === 0) {
+      return [];
+    }
+
+    // Filter and score results
+    const scoredHits = hits
+      .filter(hit => {
+        // Exclude current session
+        if (currentSessionPath && hit.source_path === currentSessionPath) {
+          return false;
+        }
+        return true;
+      })
+      .map(hit => {
+        // Calculate relevance score
+        const score = calculateRelevanceScore(hit, keywords);
+        return { hit, score };
+      })
+      // Filter by score > 0.1
+      .filter(({ score }) => score >= 0.1)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    // Convert to RelatedSession format
+    return scoredHits.map(({ hit, score }): RelatedSession => ({
+      sessionPath: hit.source_path,
+      agent: hit.agent || extractAgentFromPath(hit.source_path),
+      relevanceScore: Math.round(score * 100) / 100, // Round to 2 decimals
+      snippet: truncateSnippet(hit.snippet, 200)
+    }));
+
+  } catch (err) {
+    // Don't fail diary generation if cross-agent search fails
+    console.warn(`[enrichWithRelatedSessions] Search failed: ${err}`);
+    return [];
+  }
+}
+
+/**
+ * Extract meaningful keywords from content for search.
+ * Focuses on technical terms and unique identifiers.
+ */
+function extractKeywordsFromContent(content: string): string[] {
+  const tokens = tokenize(content);
+
+  // Count token frequency
+  const frequency = new Map<string, number>();
+  for (const token of tokens) {
+    // Skip very short or very long tokens
+    if (token.length < 3 || token.length > 40) continue;
+    // Skip pure numbers
+    if (/^\d+$/.test(token)) continue;
+
+    frequency.set(token, (frequency.get(token) || 0) + 1);
+  }
+
+  // Prioritize tokens that appear multiple times but aren't too common
+  const scored = Array.from(frequency.entries())
+    .filter(([_, count]) => count >= 2 && count <= 20)
+    .map(([token, count]) => ({
+      token,
+      // Score: frequency weighted by technical patterns
+      score: count * (isTechnicalTerm(token) ? 2 : 1)
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  return scored.map(s => s.token).slice(0, 15);
+}
+
+/**
+ * Check if a token looks like a technical term.
+ */
+function isTechnicalTerm(token: string): boolean {
+  // CamelCase or PascalCase
+  if (/^[a-z]+[A-Z]/.test(token) || /^[A-Z][a-z]+[A-Z]/.test(token)) return true;
+  // Contains underscore (likely code identifier)
+  if (token.includes('_')) return true;
+  // File extensions
+  if (/\.(ts|js|py|go|rs|json|yaml|md)$/i.test(token)) return true;
+  // Common tech patterns
+  if (/^(api|http|sql|css|html|dom|npm|git|cli|sdk|jwt|auth)/i.test(token)) return true;
+
+  return false;
+}
+
+/**
+ * Calculate relevance score for a search hit.
+ */
+function calculateRelevanceScore(
+  hit: { snippet: string; score?: number; agent?: string },
+  keywords: string[]
+): number {
+  let score = hit.score ?? 0.5; // Base score from cass
+
+  // Boost for keyword matches in snippet
+  const hitSnippetLower = hit.snippet.toLowerCase();
+  let keywordMatches = 0;
+  for (const keyword of keywords) {
+    if (hitSnippetLower.includes(keyword.toLowerCase())) {
+      keywordMatches++;
+    }
+  }
+  score += (keywordMatches / keywords.length) * 0.3;
+
+  // Small diversity bonus for different agent types
+  if (hit.agent && !['unknown', 'other'].includes(hit.agent)) {
+    score += 0.05;
+  }
+
+  return Math.min(score, 1.0);
+}
+
+/**
+ * Truncate snippet to max length, preserving word boundaries.
+ */
+function truncateSnippet(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+
+  // Find last space before maxLength
+  const truncated = text.slice(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(' ');
+
+  if (lastSpace > maxLength * 0.7) {
+    return truncated.slice(0, lastSpace) + '...';
+  }
+  return truncated + '...';
 }
 
 async function saveDiaryEntry(entry: DiaryEntry, config: Config): Promise<void> {
@@ -400,9 +584,9 @@ async function saveDiaryEntry(entry: DiaryEntry, config: Config): Promise<void> 
   }
 }
 
-// ============================================================================
-// DIARY LOADING
-// ============================================================================
+// ============================================================================//
+// DIARY LOADING//
+// ============================================================================//
 
 /**
  * Custom error types for diary loading operations
@@ -614,7 +798,7 @@ export async function listRecentDiaries(
   });
 }
 
-// --- Safe Extraction Wrapper ---
+// --- Safe Extraction Wrapper ---//
 
 /**
  * Session metadata for diary extraction.
@@ -722,7 +906,7 @@ export async function extractDiaryFields(
   return result as z.infer<typeof ExtractionSchema>;
 }
 
-// --- Statistics ---
+// --- Statistics ---//
 
 export function computeDiaryStats(diaries: DiaryEntry[]): {
   total: number;
