@@ -29,9 +29,8 @@ import {
 function buildHashCache(playbook: Playbook): Set<string> {
   const cache = new Set<string>();
   for (const b of playbook.bullets) {
-    if (!b.deprecated) {
-      cache.add(hashContent(b.content));
-    }
+    // Include deprecated bullets to prevent re-adding them (zombie rules or blocked content)
+    cache.add(hashContent(b.content));
   }
   return cache;
 }
@@ -42,7 +41,7 @@ function findSimilarBullet(
   threshold: number
 ): PlaybookBullet | undefined {
   for (const b of playbook.bullets) {
-    if (b.deprecated) continue;
+    // Check deprecated bullets too
     if (jaccardSimilarity(content, b.content) >= threshold) {
       return b;
     }

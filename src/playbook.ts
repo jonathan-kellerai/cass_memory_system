@@ -299,13 +299,15 @@ export async function loadMergedPlaybook(config: Config): Promise<Playbook> {
   const allBlocked = [...globalBlocked, ...globalToxic, ...repoBlocked, ...repoToxic];
 
   if (allBlocked.length > 0) {
-    const cleanBullets: PlaybookBullet[] = [];
     for (const b of merged.bullets) {
-      if (!(await isBlockedContent(b.content, allBlocked))) {
-        cleanBullets.push(b);
+      if (await isBlockedContent(b.content, allBlocked)) {
+        b.deprecated = true;
+        b.deprecationReason = "BLOCKED_CONTENT";
+        b.state = "retired";
+        b.maturity = "deprecated";
+        b.updatedAt = now();
       }
     }
-    merged.bullets = cleanBullets;
   }
   
   return merged;
