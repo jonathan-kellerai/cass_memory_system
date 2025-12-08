@@ -89,6 +89,7 @@ export function getEffectiveScore(
   };
 
   const multiplier = maturityMultiplier[bullet.maturity] ?? 1.0;
+  if (rawScore < 0) return rawScore;
   return rawScore * multiplier;
 }
 
