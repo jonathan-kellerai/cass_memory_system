@@ -11,6 +11,8 @@ import { validateCommand } from "./commands/validate.js";
 import { forgetCommand } from "./commands/forget.js";
 import { auditCommand } from "./commands/audit.js";
 import { projectCommand } from "./commands/project.js";
+import { serveCommand } from "./commands/serve.js";
+import { outcomeCommand } from "./commands/outcome.js";
 
 const program = new Command();
 const toInt = (value: string) => parseInt(value, 10);
@@ -131,5 +133,26 @@ program.command("project")
   .option("--top <n>", "Limit rules per category", toInt)
   .option("--show-counts", "Include helpful counts", true)
   .action(async (opts: any) => await projectCommand(opts));
+
+// --- Serve (HTTP-only MCP surface) ---
+program.command("serve")
+  .description("Run HTTP MCP server for agent integration")
+  .option("--port <n>", "Port to listen on", toInt, 8765)
+  .option("--host <host>", "Host to bind", "127.0.0.1")
+  .action(async (opts: any) => await serveCommand({ port: opts.port, host: opts.host }));
+
+// --- Outcome ---
+program.command("outcome")
+  .description("Record implicit feedback from a session outcome for shown rules")
+  .requiredOption("--status <status>", "Outcome status: success|failure|mixed")
+  .requiredOption("--rules <ids>", "Comma-separated rule ids that were shown")
+  .option("--session <path>", "Session path for provenance")
+  .option("--duration <seconds>", "Task duration in seconds", toInt)
+  .option("--errors <count>", "Number of errors encountered", toInt)
+  .option("--retries", "Whether there were retries")
+  .option("--sentiment <sentiment>", "positive|negative|neutral")
+  .option("--text <text>", "Session notes to auto-detect sentiment")
+  .option("--json", "Output JSON")
+  .action(async (opts: any) => await outcomeCommand(undefined, opts));
 
 program.parse();

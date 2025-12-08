@@ -55,11 +55,15 @@ export function getDecayedCounts(
   const allHarmful = (bullet.feedbackEvents || []).filter((e) => e.type === "harmful");
 
   for (const event of allHelpful) {
-    const val = calculateDecayedValue(event, now, halfLifeDays);
+    const base = calculateDecayedValue(event, now, halfLifeDays);
+    const weight = typeof event.decayedValue === "number" && event.decayedValue > 0 ? event.decayedValue : 1;
+    const val = base * weight;
     if (Number.isFinite(val)) decayedHelpful += val;
   }
   for (const event of allHarmful) {
-    const val = calculateDecayedValue(event, now, halfLifeDays);
+    const base = calculateDecayedValue(event, now, halfLifeDays);
+    const weight = typeof event.decayedValue === "number" && event.decayedValue > 0 ? event.decayedValue : 1;
+    const val = base * weight;
     if (Number.isFinite(val)) decayedHarmful += val;
   }
 
