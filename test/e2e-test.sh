@@ -1,60 +1,59 @@
 #!/bin/bash
-# e2e-test.sh - Full system smoke test
-
-set -e
+# e2e-test.sh - Offline/degraded E2E smoke for cass-memory CLI
+set -euo pipefail
 
 CM_BIN="./src/cm.ts"
-TEST_DIR=$(mktemp -d)
+RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cm-e2e-XXXXXX")"
+export HOME="$RUN_DIR/home"
+mkdir -p "$HOME/.cass-memory"
+
+# Force degraded mode (no cass, no LLM)
+export CASS_PATH="__missing__"
+export LLM_DISABLED=1
 export CASS_MEMORY_VERBOSE=1
-# Mock LLM key for testing (won't be used if we mock LLM or use degrades mode, 
-# but doctor checks it. We can set a dummy valid-looking key)
-export ANTHROPIC_API_KEY="sk-ant-test-dummy-key-1234567890abcdef"
 
-echo "Running E2E tests in $TEST_DIR"
+log() { echo "[$(date -Iseconds)] $*"; }
 
-# Setup clean environment
-export HOME="$TEST_DIR"
-mkdir -p "$TEST_DIR/.cass-memory"
+cleanup() { rm -rf "$RUN_DIR"; }
+trap cleanup EXIT
 
-# 1. Init
-echo "--> testing init"
-bun run $CM_BIN init
-if [ ! -f "$TEST_DIR/.cass-memory/config.json" ]; then
-  echo "FAIL: config.json not created"
-  exit 1
-fi
+log "E2E run dir: $RUN_DIR"
 
-# 2. Stats (empty)
-echo "--> testing stats (empty)"
-bun run $CM_BIN stats --json > "$TEST_DIR/stats.json"
-grep '"total": 0' "$TEST_DIR/stats.json" || exit 1
+run_step() {
+  local name="$1"; shift
+  log "--> $name: $*"
+  "$@" >"$RUN_DIR/${name}.out" 2>"$RUN_DIR/${name}.err"
+}
 
-# 3. Playbook Add
-echo "--> testing playbook add"
-bun run $CM_BIN playbook add "Always use atomic writes" --category "io" --json
-bun run $CM_BIN stats --json > "$TEST_DIR/stats_after_add.json"
-grep '"total": 1' "$TEST_DIR/stats_after_add.json" || exit 1
+# 1) init
+run_step init bun run "$CM_BIN" init
+test -f "$HOME/.cass-memory/config.json"
 
-# 4. Mark Helpful
-echo "--> testing mark helpful"
-# Need ID. Let's parse it from stats or list.
-BULLET_ID=$(bun run $CM_BIN playbook list --json | grep '"id":' | head -1 | cut -d '"' -f 4)
-echo "Marking bullet $BULLET_ID"
-bun run $CM_BIN mark "$BULLET_ID" --helpful --session "test-session" --json
+# 2) stats empty
+run_step stats-empty bun run "$CM_BIN" stats --json
+grep '"total": 0' "$RUN_DIR/stats-empty.out"
 
-# 5. Context (Hydration)
-echo "--> testing context"
-bun run $CM_BIN context "implement file writing" --json > "$TEST_DIR/context.json"
-# Should find our rule because "atomic writes" matches "file writing" keywords? 
-# Maybe not. "file" != "atomic".
-# Let's add a rule that matches.
-bun run $CM_BIN playbook add "Use fs.promises for file operations" --category "io" --json
-bun run $CM_BIN context "file operations" --json > "$TEST_DIR/context_match.json"
-grep "fs.promises" "$TEST_DIR/context_match.json" || echo "WARNING: Context matching might be weak without LLM"
+# 3) add + list rule
+RULE_CONTENT="Always write atomically"
+run_step playbook-add bun run "$CM_BIN" playbook add "$RULE_CONTENT" --category io --json
+run_step playbook-list bun run "$CM_BIN" playbook list --json
+BULLET_ID=$(grep '"id":' "$RUN_DIR/playbook-list.out" | head -1 | cut -d'"' -f4)
+test -n "$BULLET_ID"
 
-# 6. Doctor
-echo "--> testing doctor"
-bun run $CM_BIN doctor --json
+# 4) mark helpful
+run_step mark-helpful bun run "$CM_BIN" mark "$BULLET_ID" --helpful --session "e2e-session" --json
 
-echo "ALL TESTS PASSED"
-rm -rf "$TEST_DIR"
+# 5) context in no-cass mode should still return rules and no history
+TASK="file operations and atomic writes"
+run_step context bun run "$CM_BIN" context "$TASK" --json
+grep "$RULE_CONTENT" "$RUN_DIR/context.out"
+grep '"historySnippets": \[\]' "$RUN_DIR/context.out"
+
+# 6) stats should show total >=1
+run_step stats-after bun run "$CM_BIN" stats --json
+grep '"total": 1' "$RUN_DIR/stats-after.out"
+
+# 7) doctor should run in degraded mode without cass/LLM
+run_step doctor bun run "$CM_BIN" doctor --json
+
+log "ALL E2E STEPS PASSED"

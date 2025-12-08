@@ -1,20 +1,8 @@
-/**
- * Integration tests for the Curator Pipeline
- * Tests curatePlaybook() + validateDelta() interaction
- *
- * Philosophy: NO MOCKS - real implementations with validation disabled
- * to avoid external dependencies (cass, LLM)
- */
-import { describe, it, expect, beforeEach } from "bun:test";
-import { curatePlaybook } from "../src/curate.js";
-import { validateDelta, normalizeValidatorVerdict } from "../src/validate.js";
-import { PlaybookDelta, Config } from "../src/types.js";
 import {
   createTestConfig,
   createTestBullet,
   createTestPlaybook,
-  createTestFeedbackEvent,
-  createFeedbackEvent
+  createTestFeedbackEvent
 } from "./helpers/factories";
 
 const isoNow = () => new Date().toISOString();
@@ -130,7 +118,7 @@ describe("Curator Pipeline Integration", () => {
         harmfulCount: 5,
         helpfulCount: 0,
         feedbackEvents: Array(5).fill(null).map(() =>
-          createFeedbackEvent("harmful", { timestamp: isoNow() })
+          createTestFeedbackEvent("harmful", { timestamp: isoNow() })
         )
       });
       const playbook = createTestPlaybook([harmfulBullet]);
@@ -172,7 +160,7 @@ describe("Curator Pipeline Integration", () => {
         category: "javascript",
         harmfulCount: 4,
         feedbackEvents: Array(4).fill(null).map(() =>
-          createFeedbackEvent("harmful", { timestamp: isoNow() })
+          createTestFeedbackEvent("harmful", { timestamp: isoNow() })
         )
       });
       const playbook = createTestPlaybook([harmfulBullet]);
@@ -193,7 +181,7 @@ describe("Curator Pipeline Integration", () => {
         pinned: true,
         harmfulCount: 10,
         feedbackEvents: Array(10).fill(null).map(() =>
-          createFeedbackEvent("harmful", { timestamp: isoNow() })
+          createTestFeedbackEvent("harmful", { timestamp: isoNow() })
         )
       });
       const playbook = createTestPlaybook([pinnedBullet]);
@@ -217,7 +205,7 @@ describe("Curator Pipeline Integration", () => {
         maturity: "candidate",
         helpfulCount: 4,
         feedbackEvents: Array(4).fill(null).map(() =>
-          createFeedbackEvent("helpful", { timestamp: isoNow() })
+          createTestFeedbackEvent("helpful", { timestamp: isoNow() })
         )
       });
       const playbook = createTestPlaybook([candidateBullet]);
@@ -245,9 +233,9 @@ describe("Curator Pipeline Integration", () => {
         harmfulCount: 8,
         helpfulCount: 1,
         feedbackEvents: [
-          createFeedbackEvent("helpful", { timestamp: isoNow() }),
+          createTestFeedbackEvent("helpful", { timestamp: isoNow() }),
           ...Array(8).fill(null).map(() =>
-            createFeedbackEvent("harmful", { timestamp: isoNow() })
+            createTestFeedbackEvent("harmful", { timestamp: isoNow() })
           )
         ]
       });
@@ -272,7 +260,7 @@ describe("Curator Pipeline Integration", () => {
         maturity: "candidate",
         helpfulCount: 5,
         feedbackEvents: Array(5).fill(null).map(() =>
-          createFeedbackEvent("helpful", { timestamp: isoNow() })
+          createTestFeedbackEvent("helpful", { timestamp: isoNow() })
         )
       });
 
@@ -282,7 +270,7 @@ describe("Curator Pipeline Integration", () => {
         maturity: "candidate",
         harmfulCount: 5,
         feedbackEvents: Array(5).fill(null).map(() =>
-          createFeedbackEvent("harmful", { timestamp: isoNow() })
+          createTestFeedbackEvent("harmful", { timestamp: isoNow() })
         )
       });
 
@@ -367,7 +355,7 @@ describe("Curator Pipeline Integration", () => {
         harmfulCount: 20,
         helpfulCount: 0,
         feedbackEvents: Array(20).fill(null).map(() =>
-          createFeedbackEvent("harmful", { timestamp: isoNow() })
+          createTestFeedbackEvent("harmful", { timestamp: isoNow() })
         )
       });
       const playbook = createTestPlaybook([veryBadBullet]);
@@ -391,7 +379,7 @@ describe("Curator Pipeline Integration", () => {
         content: "Good rule",
         helpfulCount: 5,
         feedbackEvents: Array(5).fill(null).map(() =>
-          createFeedbackEvent("helpful", { timestamp: isoNow() })
+          createTestFeedbackEvent("helpful", { timestamp: isoNow() })
         )
       });
 
@@ -400,7 +388,7 @@ describe("Curator Pipeline Integration", () => {
         content: "Bad rule that will be handled",
         harmfulCount: 15,
         feedbackEvents: Array(15).fill(null).map(() =>
-          createFeedbackEvent("harmful", { timestamp: isoNow() })
+          createTestFeedbackEvent("harmful", { timestamp: isoNow() })
         )
       });
 

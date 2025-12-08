@@ -5,6 +5,9 @@ import path from "node:path";
 import { applyOutcomeFeedback, OutcomeRecord } from "../src/outcome.js";
 import { createTestBullet, createTestConfig } from "./helpers/factories.js";
 import { savePlaybook } from "../src/playbook.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 async function withTempPlaybook(run: (playbookPath: string) => Promise<void>) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cass-outcome-"));
@@ -36,6 +39,51 @@ describe("applyOutcomeFeedback", () => {
       expect(result.applied).toBe(1);
       const content = await fs.readFile(playbookPath, "utf-8");
       expect(content).toContain("feedbackEvents");
+    });
+  });
+
+  test("uses context log to fill missing rulesUsed", async () => {
+    await withTempPlaybook(async (playbookPath) => {
+      const bullet = createTestBullet({ id: "b-ctx" });
+      await savePlaybook(
+        { schema_version: 2, name: "pb", description: "", metadata: { createdAt: new Date().toISOString(), totalReflections: 0, totalSessionsProcessed: 0 }, deprecatedPatterns: [], bullets: [bullet] },
+        playbookPath
+      );
+
+      // Write context log to repo-local .cass to be discovered by applyOutcomeFeedback
+      const prevCwd = process.cwd();
+      const tempRepo = path.dirname(playbookPath);
+      process.chdir(tempRepo);
+      const cassDir = path.join(tempRepo, ".cass");
+      await fs.mkdir(cassDir, { recursive: true });
+      const contextLogPath = path.join(cassDir, "context-log.jsonl");
+      await fs.writeFile(
+        contextLogPath,
+        JSON.stringify({
+          task: "test",
+          ruleIds: ["b-ctx"],
+          antiPatternIds: [],
+          session: "/tmp/session-context",
+          timestamp: new Date().toISOString(),
+          source: "test"
+        }) + "\n"
+      );
+
+      const outcome: OutcomeRecord = {
+        sessionId: "/tmp/session-context",
+        outcome: "success",
+        rulesUsed: [],
+        recordedAt: new Date().toISOString(),
+        path: playbookPath
+      };
+
+      const cfg = createTestConfig({ playbookPath });
+      try {
+        const result = await applyOutcomeFeedback(outcome, cfg);
+        expect(result.applied).toBe(1);
+      } finally {
+        process.chdir(prevCwd);
+      }
     });
   });
 });

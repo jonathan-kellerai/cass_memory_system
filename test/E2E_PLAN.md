@@ -20,6 +20,7 @@
   - Context runs in degraded mode message (no cass).
   - Bullet appears in list; helpful count increments.
   - All commands exit 0.
+  - Implemented in `test/e2e-test.sh` (degraded: `CASS_PATH=__missing__`, `LLM_DISABLED=1`).
 
 ### S2: Reflect/Validate/Curate Pipeline (fixture-backed)
 - Preconditions: Provide fixture cass export files; run in temp HOME/workspace.

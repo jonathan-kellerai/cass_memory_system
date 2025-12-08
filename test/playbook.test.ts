@@ -17,8 +17,11 @@ import {
   loadPlaybook,
   loadMergedPlaybook,
   loadBlockedLog,
+  loadToxicLog,
+  appendToxicLog,
   savePlaybook,
   BlockedEntry,
+  ToxicEntry,
 } from "../src/playbook.js";
 import { Playbook, PlaybookBullet } from "../src/types.js";
 import { createTestBullet, createTestConfig } from "./helpers/index.js";
@@ -800,21 +803,21 @@ describe("loadBlockedLog", () => {
 
   it("loads multiple entries", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "toxic.log");
+      const logPath = path.join(dir, "blocked.log");
       const lines = [
-        JSON.stringify({ id: "t-1", content: "Toxic 1", reason: "r1", forgottenAt: "2024-01-01" }),
-        JSON.stringify({ id: "t-2", content: "Toxic 2", reason: "r2", forgottenAt: "2024-01-02" }),
+        JSON.stringify({ id: "t-1", content: "Blocked 1", reason: "r1", forgottenAt: "2024-01-01" }),
+        JSON.stringify({ id: "t-2", content: "Blocked 2", reason: "r2", forgottenAt: "2024-01-02" }),
       ].join("\n");
       await fs.writeFile(logPath, lines + "\n");
 
-      const entries = await loadToxicLog(logPath);
+      const entries = await loadBlockedLog(logPath);
       expect(entries.length).toBe(2);
     });
   });
 
   it("skips malformed lines", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "toxic.log");
+      const logPath = path.join(dir, "blocked.log");
       const lines = [
         JSON.stringify({ id: "t-1", content: "Valid", reason: "r", forgottenAt: "2024-01-01" }),
         "not valid json",
@@ -822,14 +825,14 @@ describe("loadBlockedLog", () => {
       ].join("\n");
       await fs.writeFile(logPath, lines + "\n");
 
-      const entries = await loadToxicLog(logPath);
+      const entries = await loadBlockedLog(logPath);
       expect(entries.length).toBe(2);
     });
   });
 
   it("skips empty lines", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "toxic.log");
+      const logPath = path.join(dir, "blocked.log");
       const lines = [
         JSON.stringify({ id: "t-1", content: "Valid", reason: "r", forgottenAt: "2024-01-01" }),
         "",
@@ -838,21 +841,21 @@ describe("loadBlockedLog", () => {
       ].join("\n");
       await fs.writeFile(logPath, lines);
 
-      const entries = await loadToxicLog(logPath);
+      const entries = await loadBlockedLog(logPath);
       expect(entries.length).toBe(2);
     });
   });
 
   it("skips entries without required id field", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "toxic.log");
+      const logPath = path.join(dir, "blocked.log");
       const lines = [
         JSON.stringify({ content: "No ID", reason: "r", forgottenAt: "2024-01-01" }),
         JSON.stringify({ id: "t-1", content: "Has ID", reason: "r", forgottenAt: "2024-01-01" }),
       ].join("\n");
       await fs.writeFile(logPath, lines);
 
-      const entries = await loadToxicLog(logPath);
+      const entries = await loadBlockedLog(logPath);
       expect(entries.length).toBe(1);
       expect(entries[0].id).toBe("t-1");
     });
@@ -860,46 +863,46 @@ describe("loadBlockedLog", () => {
 });
 
 // =============================================================================
-// appendToxicLog
+// appendBlockedLog (deprecated alias: appendToxicLog)
 // =============================================================================
-describe("appendToxicLog", () => {
+describe("appendBlockedLog", () => {
   it("appends entry to new file", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "toxic.log");
-      const entry: ToxicEntry = {
+      const logPath = path.join(dir, "blocked.log");
+      const entry: BlockedEntry = {
         id: "t-1",
-        content: "Toxic rule",
+        content: "Blocked rule",
         reason: "Bad",
         forgottenAt: "2024-01-01T00:00:00Z",
       };
 
-      await appendToxicLog(entry, logPath);
+      await appendBlockedLog(entry, logPath);
 
       const content = await fs.readFile(logPath, "utf-8");
-      expect(content).toContain("Toxic rule");
+      expect(content).toContain("Blocked rule");
     });
   });
 
   it("appends to existing file", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "toxic.log");
-      const entry1: ToxicEntry = { id: "t-1", content: "First", reason: "r", forgottenAt: "2024-01-01" };
-      const entry2: ToxicEntry = { id: "t-2", content: "Second", reason: "r", forgottenAt: "2024-01-02" };
+      const logPath = path.join(dir, "blocked.log");
+      const entry1: BlockedEntry = { id: "t-1", content: "First", reason: "r", forgottenAt: "2024-01-01" };
+      const entry2: BlockedEntry = { id: "t-2", content: "Second", reason: "r", forgottenAt: "2024-01-02" };
 
-      await appendToxicLog(entry1, logPath);
-      await appendToxicLog(entry2, logPath);
+      await appendBlockedLog(entry1, logPath);
+      await appendBlockedLog(entry2, logPath);
 
-      const entries = await loadToxicLog(logPath);
+      const entries = await loadBlockedLog(logPath);
       expect(entries.length).toBe(2);
     });
   });
 
   it("creates parent directories", async () => {
     await withTempDir(async (dir) => {
-      const logPath = path.join(dir, "nested/deep/toxic.log");
-      const entry: ToxicEntry = { id: "t-1", content: "Test", reason: "r", forgottenAt: "2024-01-01" };
+      const logPath = path.join(dir, "nested/deep/blocked.log");
+      const entry: BlockedEntry = { id: "t-1", content: "Test", reason: "r", forgottenAt: "2024-01-01" };
 
-      await appendToxicLog(entry, logPath);
+      await appendBlockedLog(entry, logPath);
 
       const stats = await fs.stat(logPath);
       expect(stats.isFile()).toBe(true);
