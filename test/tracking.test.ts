@@ -30,6 +30,7 @@ describe("getProcessedLogPath", () => {
     const expected = join(os.homedir(), ".cass-memory", "reflections", `ws-${hash}.processed.log`);
     expect(getProcessedLogPath(workspace)).toBe(expected);
   });
+
 });
 
 // =============================================================================
