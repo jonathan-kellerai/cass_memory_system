@@ -143,8 +143,16 @@ const RESOURCE_DEFS = [
     name: "Playbook Stats",
     description: "Playbook health metrics",
     mimeType: "application/json"
+  },
+  {
+    uri: "memory://stats",
+    name: "Playbook Stats (alias)",
+    description: "Playbook health metrics",
+    mimeType: "application/json"
   }
 ];
+
+const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5MB guard to avoid runaway payloads
 
 async function handleToolCall(name: string, args: any): Promise<any> {
   switch (name) {
@@ -193,6 +201,9 @@ async function handleToolCall(name: string, args: any): Promise<any> {
       assertArgs(args, { query: "string" });
       const scope: "playbook" | "cass" | "both" = args.scope || "both";
       const limit = typeof args?.limit === "number" ? args.limit : 10;
+      const days = typeof args?.days === "number" ? args.days : undefined;
+      const agent = typeof args?.agent === "string" ? args.agent : undefined;
+      const workspace = typeof args?.workspace === "string" ? args.workspace : undefined;
       const config = await loadConfig();
 
       const result: { playbook?: any[]; cass?: any[] } = {};
@@ -220,12 +231,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
 
       if (scope === "cass" || scope === "both") {
         const t0 = performance.now();
-        const hits = await safeCassSearch(
-          args.query,
-          { limit },
-          config.cassPath,
-          config
-        );
+        const hits = await safeCassSearch(args.query, { limit, days, agent, workspace }, config.cassPath);
         maybeProfile("memory_search cass search", t0);
         result.cass = hits.map((h) => ({
           path: h.source_path,
@@ -388,7 +394,8 @@ async function handleResourceRead(uri: string): Promise<any> {
       const outcomes = await loadOutcomes(config, 50);
       return { uri, mimeType: "application/json", data: outcomes };
     }
-    case "cm://stats": {
+    case "cm://stats":
+    case "memory://stats": {
       const playbook = await loadMergedPlaybook(config);
       const bullets = playbook.bullets;
       const activeBullets = getActiveBullets(playbook);
@@ -528,9 +535,9 @@ export async function serveCommand(options: { port?: number; host?: string } = {
     let raw = "";
     req.on("data", (chunk) => {
       raw += chunk.toString();
-      if (raw.length > 1e6) { // 1MB limit
+      if (raw.length > MAX_BODY_BYTES) {
         res.statusCode = 413;
-        res.end(JSON.stringify(buildError(null, "Payload too large", -32700)));
+        res.end(JSON.stringify(buildError(null, "Payload too large", -32600)));
         req.destroy();
       }
     });
