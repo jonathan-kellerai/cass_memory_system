@@ -6,13 +6,13 @@ import {
   isLLMAvailable,
   getAvailableProviders,
   fillPrompt,
-  truncateForPrompt,
   llmWithRetry,
   llmWithFallback,
   LLM_RETRY_CONFIG,
   PROMPTS,
   type LLMProvider
 } from "../src/llm.js";
+import { truncateForContext } from "../src/utils.js";
 import { z } from "zod";
 import { createTestConfig } from "./helpers/factories.js";
 
@@ -376,55 +376,53 @@ Line 3: C`);
 });
 
 // ============================================================================
-// truncateForPrompt() Tests
+// truncateForContext() Tests
 // ============================================================================
 
-describe("truncateForPrompt", () => {
+describe("truncateForContext", () => {
   it("returns content unchanged when under limit", () => {
     const content = "Short content";
-    const result = truncateForPrompt(content, 100);
+    const result = truncateForContext(content, { maxChars: 100 });
     expect(result).toBe(content);
   });
 
   it("returns content unchanged when at exact limit", () => {
     const content = "x".repeat(100);
-    const result = truncateForPrompt(content, 100);
+    const result = truncateForContext(content, { maxChars: 100 });
     expect(result).toBe(content);
   });
 
   it("truncates content over limit with indicator", () => {
     const content = "x".repeat(1000);
-    const result = truncateForPrompt(content, 200);
+    const result = truncateForContext(content, { maxChars: 200 });
     // The result should be smaller than original even with truncation indicator
     expect(result.length).toBeLessThan(1000);
     expect(result).toContain("truncated");
   });
 
-  it("preserves beginning and end of content", () => {
+  it("preserves beginning and end of content with middle strategy", () => {
     const content = "START" + "x".repeat(200) + "END";
-    const result = truncateForPrompt(content, 50);
-    // Since maxChars is 50 (very small), it might only return indicator
-    // Use a slightly larger budget to verify structure
-    const result2 = truncateForPrompt(content, 80);
-    expect(result2).toContain("START");
-    expect(result2).toContain("END");
+    // With middle strategy (default), both start and end should be preserved
+    const result = truncateForContext(content, { maxChars: 100, strategy: "middle" });
+    expect(result).toContain("START");
+    expect(result).toContain("END");
   });
 
-  it("includes character count in truncation indicator", () => {
+  it("includes truncation marker", () => {
     const content = "x".repeat(500);
-    const result = truncateForPrompt(content, 100);
-    expect(result).toMatch(/\d+ characters truncated/);
+    const result = truncateForContext(content, { maxChars: 100 });
+    expect(result).toContain("truncated");
   });
 
-  it("uses default maxChars of 50000", () => {
+  it("uses default maxChars when not specified", () => {
     const shortContent = "x".repeat(100);
-    const result = truncateForPrompt(shortContent);
+    const result = truncateForContext(shortContent);
     expect(result).toBe(shortContent);
   });
 
   it("handles very long content", () => {
     const content = "x".repeat(100000);
-    const result = truncateForPrompt(content, 1000);
+    const result = truncateForContext(content, { maxChars: 1000 });
     expect(result.length).toBeLessThan(2000);
     expect(result).toContain("truncated");
   });
