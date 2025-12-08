@@ -42,8 +42,7 @@ export async function scanSessionsForViolations(
         const result = await llmWithFallback(
           AuditOutputSchema,
           prompt,
-          config,
-          "audit"
+          config
         );
 
         for (const res of result.results) {
