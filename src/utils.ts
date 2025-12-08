@@ -822,10 +822,18 @@ export function shouldRetry(category: ErrorCategory): boolean {
 
 export function expandPath(p: string): string {
   if (!p) return "";
+  if (p === "~") return process.env.HOME || os.homedir();
+
+  if (p.startsWith("~/")) {
+    const home = process.env.HOME || os.homedir();
+    return path.join(home, p.slice(2));
+  }
+
   if (p.startsWith("~")) {
     const home = process.env.HOME || os.homedir();
     return path.join(home, p.slice(1));
   }
+
   return p;
 }
 
@@ -1193,7 +1201,6 @@ export function hashContent(content: string): string {
 }
 
 // Alias for backward compatibility - some modules import as contentHash
-// Backwards compatibility alias (some modules import contentHash)
 export function contentHash(content: string): string {
   return hashContent(content);
 }

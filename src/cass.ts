@@ -243,49 +243,55 @@ export async function safeCassSearch(
   }
 
   const activeConfig = config || await loadConfig();
-  const sanitizeConfig = normalizeSanitizeConfig(activeConfig);
+  const sanitizeConfig = getSanitizeConfig(activeConfig);
+  
+  // Pre-compile patterns for performance (avoid recompilation per hit)
+  const compiledConfig = {
+    ...sanitizeConfig,
+    extraPatterns: compileExtraPatterns(sanitizeConfig.extraPatterns)
+  };
 
   try {
     const hits = await cassSearch(query, options, cassPath);
-
+    
     return hits.map(hit => ({
       ...hit,
-      snippet: sanitize(hit.snippet, sanitizeConfig)
+      snippet: sanitize(hit.snippet, compiledConfig)
     }));
   } catch (err: any) {
     const exitCode = err.code;
-
+    
     if (exitCode === CASS_EXIT_CODES.INDEX_MISSING) {
       log("Index missing, rebuilding...", true);
       try {
         await cassIndex(cassPath);
         const hits = await cassSearch(query, options, cassPath);
-
+        
         return hits.map(hit => ({
           ...hit,
-          snippet: sanitize(hit.snippet, sanitizeConfig)
+          snippet: sanitize(hit.snippet, compiledConfig)
         }));
       } catch (retryErr) {
         error(`Recovery failed: ${retryErr}`);
         return [];
       }
     }
-
+    
     if (exitCode === CASS_EXIT_CODES.TIMEOUT) {
       log("Search timed out, retrying with reduced limit...", true);
       const reducedOptions = { ...options, limit: Math.max(1, Math.floor((options.limit || 10) / 2)) };
       try {
         const hits = await cassSearch(query, reducedOptions, cassPath);
-
+        
         return hits.map(hit => ({
           ...hit,
-          snippet: sanitize(hit.snippet, sanitizeConfig)
+          snippet: sanitize(hit.snippet, compiledConfig)
         }));
       } catch {
         return [];
       }
     }
-
+    
     error(`Cass search failed: ${err.message}`);
     return [];
   }
@@ -304,11 +310,13 @@ export async function cassExport(
   try {
     const { stdout } = await execFileAsync(cassPath, args, { maxBuffer: 50 * 1024 * 1024 });
     const activeConfig = config || await loadConfig();
-    return sanitizeWithConfig(stdout, activeConfig);
+    const sanitizeConfig = getSanitizeConfig(activeConfig);
+    const compiledConfig = {
+      ...sanitizeConfig,
+      extraPatterns: compileExtraPatterns(sanitizeConfig.extraPatterns)
+    };
+    return sanitize(stdout, compiledConfig);
   } catch (err: any) {
-    if (err?.code === "ENOENT") {
-      warn(`cass binary not found at ${cassPath}. Set CASS_PATH or install cass. Falling back to direct parse.`);
-    }
     const fallback = await handleSessionExportFailure(sessionPath, err, config);
     if (fallback !== null) return fallback;
 

@@ -287,24 +287,6 @@ export function fillPrompt(
   return result;
 }
 
-export function truncateForPrompt(content: string, maxChars = 50000): string {
-  if (content.length <= maxChars) return content;
-
-  const marker = `\n\n[... ${content.length - maxChars} characters truncated ...]\n\n`;
-  const markerLen = marker.length;
-  const available = maxChars - markerLen;
-
-  if (available <= 0) {
-    return content.slice(0, maxChars);
-  }
-
-  const keepChars = Math.floor(available / 2);
-  const beginning = content.slice(0, keepChars);
-  const ending = content.slice(-keepChars);
-
-  return `${beginning}${marker}${ending}`;
-}
-
 // --- Resilience Wrapper ---
 
 export const LLM_RETRY_CONFIG = {
@@ -933,7 +915,7 @@ export async function generateSearchQueries(
 
   const model = getModel(llmConfig);
 
-  const prompt = `Given this task: ${truncateForPrompt(task, 5000)}
+  const prompt = `Given this task: ${truncateForContext(task, { maxChars: 5000 })}
 
 Generate 3-5 diverse search queries to find relevant information:
 - Similar problems encountered before

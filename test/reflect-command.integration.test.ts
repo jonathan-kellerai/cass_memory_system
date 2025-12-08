@@ -7,8 +7,6 @@ import { createTestBullet } from "./helpers/factories.js";
 import { withTempCassHome, writeFileInDir } from "./helpers/temp.js";
 import { createEmptyPlaybook } from "../src/playbook.js";
 import { getProcessedLogPath } from "../src/tracking.js";
-
-// Mocks for heavy dependencies
 import { mock } from "bun:test";
 
 const mockDiary = {
@@ -38,59 +36,12 @@ const mockDelta = {
 const curatedPlaybook = createEmptyPlaybook("integration");
 curatedPlaybook.bullets = [createTestBullet({ content: mockDelta.bullet.content, category: mockDelta.bullet.category })];
 
-const mockGenerateDiary = mock(() => ({ ...mockDiary }));
-const mockReflectOnSession = mock(() => [mockDelta]);
-const mockValidateDelta = mock(async () => ({ valid: true }));
-const mockCuratePlaybook = mock(() => ({
-  applied: 1,
-  skipped: 0,
-  inversions: [],
-  promotions: [],
-  playbook: curatedPlaybook,
-}));
-
-mock.module("../src/diary.js", () => ({
-  generateDiary: mockGenerateDiary,
-}));
-
-mock.module("../src/reflect.js", () => ({
-  reflectOnSession: mockReflectOnSession,
-}));
-
-mock.module("../src/validate.js", () => ({
-  validateDelta: mockValidateDelta,
-}));
-
-mock.module("../src/curate.js", () => ({
-  curatePlaybook: mockCuratePlaybook,
-}));
-
-// Avoid cass dependency in this integration path
-mock.module("../src/cass.js", () => ({
-  findUnprocessedSessions: async () => [],
-  cassExport: async () => "this is synthetic session content that is definitely more than fifty characters long",
-  cassExpand: async () => "expanded context",
-  cassTimeline: async () => ({ groups: [] }),
-  cassAvailable: () => true,
-  cassSearch: async () => [],
-  cassStats: async () => null,
-  cassIndex: async () => undefined,
-  safeCassSearch: async () => [],
-}));
-
 describe("reflectCommand integration", () => {
-  afterAll(() => {
-    mock.restore();
-  });
-
   const originalCwd = process.cwd();
 
   afterEach(() => {
     process.chdir(originalCwd);
-    mockGenerateDiary.mockReset();
-    mockReflectOnSession.mockReset();
-    mockValidateDelta.mockReset();
-    mockCuratePlaybook.mockReset();
+    mock.restore();
   });
 
   it("processes a provided session, writes playbook, and records processed log", async () => {
@@ -107,6 +58,46 @@ describe("reflectCommand integration", () => {
       // Patch mocks to use this session path
       mockDiary.sessionPath = sessionPath;
       (mockDelta as any).sourceSession = sessionPath;
+
+      // Setup scoped mocks for heavy dependencies
+      const mockGenerateDiary = mock(() => ({ ...mockDiary }));
+      const mockReflectOnSession = mock(() => [mockDelta]);
+      const mockValidateDelta = mock(async () => ({ valid: true }));
+      const mockCuratePlaybook = mock(() => ({
+        applied: 1,
+        skipped: 0,
+        inversions: [],
+        promotions: [],
+        playbook: curatedPlaybook,
+      }));
+
+      mock.module("../src/diary.js", () => ({
+        generateDiary: mockGenerateDiary,
+      }));
+
+      mock.module("../src/reflect.js", () => ({
+        reflectOnSession: mockReflectOnSession,
+      }));
+
+      mock.module("../src/validate.js", () => ({
+        validateDelta: mockValidateDelta,
+      }));
+
+      mock.module("../src/curate.js", () => ({
+        curatePlaybook: mockCuratePlaybook,
+      }));
+
+      mock.module("../src/cass.js", () => ({
+        findUnprocessedSessions: async () => [],
+        cassExport: async () => "this is synthetic session content that is definitely more than fifty characters long",
+        cassExpand: async () => "expanded context",
+        cassTimeline: async () => ({ groups: [] }),
+        cassAvailable: () => true,
+        cassSearch: async () => [],
+        cassStats: async () => null,
+        cassIndex: async () => undefined,
+        safeCassSearch: async () => [],
+      }));
 
       const { reflectCommand } = await import("../src/commands/reflect.js");
 

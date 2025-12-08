@@ -259,7 +259,8 @@ describe("ProcessedLog - Save", () => {
       const content = await readFile(logPath, "utf-8");
       const lines = content.split("\n");
       const dataLine = lines.find(l => !l.startsWith("#") && l.includes("/path/session.jsonl"));
-      expect(dataLine?.startsWith("-\t")).toBe(true);
+      const parsed = JSON.parse(dataLine || "{}");
+      expect(parsed.diaryId).toBe("-");
     });
   });
 
