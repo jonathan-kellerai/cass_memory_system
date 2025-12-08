@@ -10,6 +10,7 @@ import {
 // ---------------------------------------------------------------------------
 
 function getHalfLifeDays(config: Config): number {
+  // Use optional chaining for safety against malformed config objects in tests
   const fromScoring = (config as any)?.scoring?.decayHalfLifeDays;
   if (typeof fromScoring === "number" && fromScoring > 0) return fromScoring;
   const legacy = (config as any)?.defaultDecayHalfLife;
@@ -35,6 +36,8 @@ export function calculateDecayedValue(
   const eventDate = new Date(event.timestamp);
   const ageMs = now.getTime() - eventDate.getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  
+  // Safety check for invalid halfLifeDays
   if (!Number.isFinite(ageDays) || halfLifeDays <= 0) return 0;
 
   // Exponential decay: value = 1 * (0.5)^(age/halfLife); clamp future events

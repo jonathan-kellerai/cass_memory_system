@@ -118,6 +118,7 @@ export function createTestFeedbackEvent(
     sessionPath: overrides.sessionPath ?? `/tmp/session-${eventCounter++}.jsonl`,
     context: overrides.context,
     reason: overrides.reason,
+    decayedValue: overrides.decayedValue,
   };
 }
 

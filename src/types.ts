@@ -238,7 +238,8 @@ export type DiaryEntry = z.infer<typeof DiaryEntrySchema>;
 export const SanitizationConfigSchema = z.object({
   enabled: z.boolean().default(true),
   extraPatterns: z.array(z.string()).default([]),
-  auditLog: z.boolean().default(false)
+  auditLog: z.boolean().default(false),
+  auditLevel: z.enum(["off", "info", "debug"]).default("info")
 });
 export type SanitizationConfig = z.infer<typeof SanitizationConfigSchema>;
 
