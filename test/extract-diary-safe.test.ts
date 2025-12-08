@@ -1,17 +1,5 @@
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { extractDiarySafe, SessionMetadata } from "../src/diary.js";
-
-// Mock the extractDiary function from llm.js
-const mockExtractDiary = mock(() => Promise.resolve({
-  status: "success" as const,
-  accomplishments: ["Completed task"],
-  decisions: ["Used approach A"],
-  challenges: ["Hit a bug"],
-  preferences: ["Prefer async"],
-  keyLearnings: ["Learned X"],
-  tags: ["testing"],
-  searchAnchors: ["search", "anchor"]
-}));
 
 // We need to test the fallback behavior without actually calling the LLM
 // This is a behavioral test of the function structure

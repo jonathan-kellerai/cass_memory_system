@@ -258,6 +258,123 @@ async function exportSessionSafe(sessionPath: string, cassPath: string): Promise
   }
 }
 
+// ============================================================================
+// RAW SESSION FORMATTING
+// ============================================================================
+
+/**
+ * Format raw session files when cass export is unavailable.
+ * Converts various session formats to human-readable markdown.
+ *
+ * @param content - Raw session file content
+ * @param ext - File extension (with or without leading dot)
+ * @returns Human-readable formatted string
+ *
+ * @example
+ * // JSONL input
+ * const formatted = formatRawSession('{"role":"user","content":"Hello"}', '.jsonl');
+ * // Returns: "**user**: Hello\n\n"
+ *
+ * @example
+ * // JSON input
+ * const formatted = formatRawSession('{"messages":[{"role":"user","content":"Hi"}]}', '.json');
+ * // Returns: "**user**: Hi\n\n"
+ */
+export function formatRawSession(content: string, ext: string): string {
+  // Normalize extension (handle with or without leading dot)
+  const normalizedExt = ext.startsWith('.') ? ext.toLowerCase() : `.${ext.toLowerCase()}`;
+
+  switch (normalizedExt) {
+    case '.md':
+    case '.markdown':
+      // Markdown: return as-is (already human-readable)
+      return content;
+
+    case '.jsonl':
+      // JSONL: parse each line as JSON, format as conversation
+      return formatJsonlSession(content);
+
+    case '.json':
+      // JSON: parse as single object with messages array
+      return formatJsonSession(content);
+
+    default:
+      // Unsupported format: return with warning header
+      return `<!-- WARNING: Unsupported session format (${normalizedExt}). Raw content follows. -->\n\n${content}`;
+  }
+}
+
+/**
+ * Format a JSONL session file.
+ * Each line is expected to be: { role: string, content: string }
+ */
+function formatJsonlSession(content: string): string {
+  const lines = content.split('\n').filter(line => line.trim());
+  const formatted: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    try {
+      const parsed = JSON.parse(line);
+      const role = parsed.role ?? '[unknown]';
+      const messageContent = parsed.content ?? '[empty]';
+      formatted.push(`**${role}**: ${messageContent}`);
+    } catch {
+      // Invalid JSON line: include with parse error marker
+      formatted.push(`[PARSE ERROR] ${line}`);
+    }
+  }
+
+  return formatted.join('\n\n');
+}
+
+/**
+ * Format a JSON session file.
+ * Expected schema: { messages: Array<{ role: string, content: string }> }
+ * Also handles variations like { conversation: [...] } or direct array
+ */
+function formatJsonSession(content: string): string {
+  try {
+    const parsed = JSON.parse(content);
+
+    // Handle different JSON structures
+    let messages: Array<{ role?: string; content?: string }>;
+
+    if (Array.isArray(parsed)) {
+      // Direct array of messages
+      messages = parsed;
+    } else if (Array.isArray(parsed.messages)) {
+      // Standard { messages: [...] } format
+      messages = parsed.messages;
+    } else if (Array.isArray(parsed.conversation)) {
+      // Alternative { conversation: [...] } format
+      messages = parsed.conversation;
+    } else if (Array.isArray(parsed.turns)) {
+      // Alternative { turns: [...] } format (used by some agents)
+      messages = parsed.turns;
+    } else {
+      // Unknown structure: return with warning
+      return `<!-- WARNING: Unrecognized JSON structure. Expected {messages: [...]} or array. -->\n\n${content}`;
+    }
+
+    const formatted: string[] = [];
+
+    for (const msg of messages) {
+      const role = msg.role ?? '[unknown]';
+      const messageContent = msg.content ?? '[empty]';
+      formatted.push(`**${role}**: ${messageContent}`);
+    }
+
+    return formatted.join('\n\n');
+  } catch (err) {
+    // JSON parse error: return with error message
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return `[PARSE ERROR: ${errorMsg}]\n\n${content}`;
+  }
+}
+
 async function enrichWithRelatedSessions(_content: string, _config: Config): Promise<RelatedSession[]> {
   // Placeholder for cross-agent enrichment
   return []; 

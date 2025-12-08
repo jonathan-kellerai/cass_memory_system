@@ -578,13 +578,13 @@ export async function generateContext(
   });
 
   return llmWithRetry(async () => {
-    const { briefing } = await generateObject({
+    const { object } = await generateObject({
       model,
       schema: z.object({ briefing: z.string() }), // Using structured object to force format
       prompt,
       temperature: 0.3,
     });
-    return briefing;
+    return object.briefing;
   }, "generateContext");
 }
 

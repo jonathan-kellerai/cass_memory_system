@@ -1,26 +1,9 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
-import { CassHit, CassHitSchema } from "./types.js";
+import { CassHit, CassHitSchema, CassTimelineGroup, CassTimelineResult } from "./types.js";
 import { log, error } from "./utils.js";
 
 const execFileAsync = promisify(execFile);
-
-interface CassTimelineSession {
-  path: string;
-  agent: string;
-  messageCount?: number;
-  startTime?: string;
-  endTime?: string;
-}
-
-interface CassTimelineGroup {
-  date: string;
-  sessions: CassTimelineSession[];
-}
-
-export interface CassTimelineResult {
-  groups: CassTimelineGroup[];
-}
 
 // --- Constants ---
 

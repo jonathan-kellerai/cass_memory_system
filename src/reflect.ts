@@ -29,8 +29,6 @@ const ReflectorOutputSchema = z.object({
   deltas: z.array(PlaybookDeltaSchema),
 });
 
-type ReflectorOutput = z.infer<typeof ReflectorOutputSchema>;
-
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
