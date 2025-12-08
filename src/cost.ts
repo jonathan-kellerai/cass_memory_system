@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { Config } from "./types.js";
 import { expandPath, ensureDir, atomicWrite, now, fileExists } from "./utils.js";
+import { withLock } from "./lock.js";
 
 export interface CostEntry {
   timestamp: string;
@@ -65,18 +66,21 @@ export async function recordCost(
 
 async function updateTotalCost(costDir: string, amount: number): Promise<void> {
   const totalPath = path.join(costDir, "total.json");
-  let total = { allTime: 0, lastUpdated: now() };
   
-  if (await fileExists(totalPath)) {
-    try {
-      total = JSON.parse(await fs.readFile(totalPath, "utf-8"));
-    } catch {} // Ignore errors, assume default if file is corrupt
-  }
-  
-  total.allTime += amount;
-  total.lastUpdated = now();
-  
-  await atomicWrite(totalPath, JSON.stringify(total, null, 2));
+  await withLock(totalPath, async () => {
+    let total = { allTime: 0, lastUpdated: now() };
+    
+    if (await fileExists(totalPath)) {
+      try {
+        total = JSON.parse(await fs.readFile(totalPath, "utf-8"));
+      } catch {} // Ignore errors, assume default if file is corrupt
+    }
+    
+    total.allTime += amount;
+    total.lastUpdated = now();
+    
+    await atomicWrite(totalPath, JSON.stringify(total, null, 2));
+  });
 }
 
 export async function checkBudget(config: Config): Promise<{ allowed: boolean; reason?: string }> {
