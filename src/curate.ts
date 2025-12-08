@@ -16,8 +16,7 @@ import {
   jaccardSimilarity, 
   generateBulletId, 
   now,
-  log,
-  tokenize
+  log
 } from "./utils.js";
 import { 
   checkForPromotion, 

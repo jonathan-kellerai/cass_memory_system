@@ -229,6 +229,10 @@ export async function safeCassSearch(
     return [];
   }
 
+  if (!query || !query.trim()) {
+    return [];
+  }
+
   const activeConfig = config || await loadConfig();
   const sanitizeConfig = normalizeSanitizeConfig(activeConfig);
 

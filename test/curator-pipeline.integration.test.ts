@@ -6,9 +6,9 @@
  * to avoid external dependencies (cass, LLM)
  */
 import { describe, it, expect, beforeEach } from "bun:test";
-import { curatePlaybook } from "../src/curate";
-import { validateDelta, normalizeValidatorVerdict } from "../src/validate";
-import { PlaybookDelta, Config } from "../src/types";
+import { curatePlaybook } from "../src/curate.js";
+import { validateDelta, normalizeValidatorVerdict } from "../src/validate.js";
+import { PlaybookDelta, Config } from "../src/types.js";
 import {
   createTestConfig,
   createTestBullet,
