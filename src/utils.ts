@@ -574,6 +574,250 @@ export function handlePermissionErrorSync(
   );
 }
 
+// --- Error Categorization ---
+
+/**
+ * Categories for classifying errors.
+ * Used to determine appropriate exit codes, messaging, and retry behavior.
+ */
+export type ErrorCategory =
+  | "user_input" // Invalid input from user (bad arguments, invalid IDs)
+  | "configuration" // Config file issues (invalid YAML, missing required fields)
+  | "filesystem" // File/directory issues (ENOENT, EACCES, disk full)
+  | "network" // API/network failures (timeouts, connection refused)
+  | "cass" // cass binary errors (not installed, index issues)
+  | "llm" // LLM provider errors (rate limits, API errors)
+  | "internal"; // Bugs in cass-memory (unexpected states)
+
+/**
+ * Map of error codes to their categories.
+ */
+const ERROR_CODE_CATEGORIES: Record<string, ErrorCategory> = {
+  // Filesystem errors
+  ENOENT: "filesystem",
+  EACCES: "filesystem",
+  EPERM: "filesystem",
+  EEXIST: "filesystem",
+  ENOTDIR: "filesystem",
+  EISDIR: "filesystem",
+  EMFILE: "filesystem",
+  ENOSPC: "filesystem",
+  EROFS: "filesystem",
+
+  // Network errors
+  ECONNREFUSED: "network",
+  ECONNRESET: "network",
+  ETIMEDOUT: "network",
+  ENOTFOUND: "network",
+  EAI_AGAIN: "network",
+  EHOSTUNREACH: "network",
+};
+
+/**
+ * Patterns in error messages that indicate specific categories.
+ * Order matters - more specific patterns should come first.
+ */
+const ERROR_MESSAGE_PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory }> = [
+  // LLM errors
+  { pattern: /rate[_\s]?limit/i, category: "llm" },
+  { pattern: /api[_\s]?key/i, category: "llm" },
+  { pattern: /token[_\s]?limit/i, category: "llm" },
+  { pattern: /context[_\s]?(length|window)/i, category: "llm" },
+  { pattern: /anthropic|openai|google.*ai/i, category: "llm" },
+  { pattern: /model.*not.*found/i, category: "llm" },
+  { pattern: /invalid.*model/i, category: "llm" },
+  { pattern: /quota.*exceeded/i, category: "llm" },
+
+  // Cass errors
+  { pattern: /cass.*not.*found/i, category: "cass" },
+  { pattern: /cass.*command/i, category: "cass" },
+  { pattern: /cass.*index/i, category: "cass" },
+  { pattern: /cass.*export/i, category: "cass" },
+  { pattern: /session.*search/i, category: "cass" },
+
+  // User input errors
+  { pattern: /invalid.*bullet/i, category: "user_input" },
+  { pattern: /invalid.*id/i, category: "user_input" },
+  { pattern: /invalid.*path/i, category: "user_input" },
+  { pattern: /invalid.*category/i, category: "user_input" },
+  { pattern: /invalid.*input/i, category: "user_input" },
+  { pattern: /validation.*failed/i, category: "user_input" },
+  { pattern: /required.*parameter/i, category: "user_input" },
+  { pattern: /missing.*argument/i, category: "user_input" },
+
+  // Configuration errors
+  { pattern: /config.*invalid/i, category: "configuration" },
+  { pattern: /invalid.*config/i, category: "configuration" },
+  { pattern: /yaml.*parse/i, category: "configuration" },
+  { pattern: /json.*parse/i, category: "configuration" },
+  { pattern: /schema.*validation/i, category: "configuration" },
+  { pattern: /missing.*required.*field/i, category: "configuration" },
+
+  // Network errors
+  { pattern: /timeout/i, category: "network" },
+  { pattern: /connection.*refused/i, category: "network" },
+  { pattern: /fetch.*failed/i, category: "network" },
+  { pattern: /network.*error/i, category: "network" },
+  { pattern: /dns.*lookup/i, category: "network" },
+
+  // Filesystem errors
+  { pattern: /permission.*denied/i, category: "filesystem" },
+  { pattern: /no.*such.*file/i, category: "filesystem" },
+  { pattern: /file.*not.*found/i, category: "filesystem" },
+  { pattern: /directory.*not.*found/i, category: "filesystem" },
+  { pattern: /disk.*full/i, category: "filesystem" },
+  { pattern: /read.*only.*file/i, category: "filesystem" },
+];
+
+/**
+ * Map error categories to recommended exit codes.
+ */
+export const ERROR_CATEGORY_EXIT_CODES: Record<ErrorCategory, number> = {
+  user_input: 2, // Like UNIX convention for usage errors
+  configuration: 3,
+  filesystem: 4,
+  network: 5,
+  cass: 6,
+  llm: 7,
+  internal: 1, // Generic error
+};
+
+/**
+ * Categorize an error for appropriate handling and user messaging.
+ *
+ * Uses a multi-tier approach:
+ * 1. Check if error is a known custom error type (InputValidationError, PermissionError)
+ * 2. Check error code (ENOENT, EACCES, etc.)
+ * 3. Check error name (e.g., ZodError for schema validation)
+ * 4. Match error message against patterns
+ * 5. Default to "internal" for unknown errors
+ *
+ * @param error - The error to categorize
+ * @returns The error category
+ *
+ * @example
+ * const category = categorizeError(error);
+ * process.exit(ERROR_CATEGORY_EXIT_CODES[category]);
+ *
+ * @example
+ * switch (categorizeError(error)) {
+ *   case 'network':
+ *     console.log('Check your internet connection');
+ *     break;
+ *   case 'llm':
+ *     console.log('API error - check your API key');
+ *     break;
+ * }
+ */
+export function categorizeError(error: unknown): ErrorCategory {
+  // Handle non-Error objects
+  if (!(error instanceof Error)) {
+    return "internal";
+  }
+
+  // Check for our custom error types
+  if (error instanceof InputValidationError) {
+    return "user_input";
+  }
+  if (error instanceof PermissionError) {
+    return "filesystem";
+  }
+
+  // Check error code (Node.js system errors)
+  const errorCode = (error as NodeJS.ErrnoException).code;
+  if (errorCode && ERROR_CODE_CATEGORIES[errorCode]) {
+    return ERROR_CODE_CATEGORIES[errorCode];
+  }
+
+  // Check error name for known types
+  if (error.name === "ZodError") {
+    return "configuration"; // Schema validation failed
+  }
+  if (error.name === "SyntaxError") {
+    // Could be JSON/YAML parse error
+    const msg = error.message.toLowerCase();
+    if (msg.includes("json") || msg.includes("yaml") || msg.includes("unexpected token")) {
+      return "configuration";
+    }
+  }
+  if (error.name === "TypeError" || error.name === "ReferenceError") {
+    return "internal"; // Likely a bug
+  }
+  if (error.name === "AbortError") {
+    return "user_input"; // User cancelled
+  }
+
+  // Match error message against patterns
+  const message = error.message || "";
+  for (const { pattern, category } of ERROR_MESSAGE_PATTERNS) {
+    if (pattern.test(message)) {
+      return category;
+    }
+  }
+
+  // Check for stack trace hints (cass-memory internal bugs)
+  const stack = error.stack || "";
+  if (stack.includes("cass-memory/src/") || stack.includes("cass_memory_system/src/")) {
+    // Error originated from our code but wasn't caught specifically
+    // Could be an edge case we haven't handled
+    return "internal";
+  }
+
+  // Default to internal for unknown errors
+  return "internal";
+}
+
+/**
+ * Get a user-friendly description for an error category.
+ */
+export function getErrorCategoryDescription(category: ErrorCategory): string {
+  switch (category) {
+    case "user_input":
+      return "Invalid input provided";
+    case "configuration":
+      return "Configuration error";
+    case "filesystem":
+      return "File system error";
+    case "network":
+      return "Network error";
+    case "cass":
+      return "Cass integration error";
+    case "llm":
+      return "LLM provider error";
+    case "internal":
+      return "Internal error";
+  }
+}
+
+/**
+ * Get recommended user action for an error category.
+ */
+export function getErrorCategoryAction(category: ErrorCategory): string {
+  switch (category) {
+    case "user_input":
+      return "Check the command arguments and try again";
+    case "configuration":
+      return "Check your config files (~/.cass-memory/config.json or .cass/config.yaml)";
+    case "filesystem":
+      return "Check file permissions and available disk space";
+    case "network":
+      return "Check your internet connection and try again";
+    case "cass":
+      return "Install cass or set CASS_PATH: cargo install cass";
+    case "llm":
+      return "Check your API key and rate limits";
+    case "internal":
+      return "This may be a bug. Please report at https://github.com/anthropics/cass-memory/issues";
+  }
+}
+
+/**
+ * Determine if an error category should trigger retry behavior.
+ */
+export function shouldRetry(category: ErrorCategory): boolean {
+  return category === "network" || category === "llm";
+}
+
 // --- Path Utilities ---
 
 export function expandPath(p: string): string {
