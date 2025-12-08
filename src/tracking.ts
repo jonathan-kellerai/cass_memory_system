@@ -120,13 +120,20 @@ export type UsageEvent =
 // Usage Analytics Implementation
 // -----------------------------------------------------------------------------
 
-const USAGE_LOG_PATH = path.join(os.homedir(), ".cass-memory", "usage.jsonl");
+let usageLogPath = path.join(os.homedir(), ".cass-memory", "usage.jsonl");
 
 /**
  * Get the path to the usage log file.
  */
 export function getUsageLogPath(): string {
-  return USAGE_LOG_PATH;
+  return usageLogPath;
+}
+
+/**
+ * Set the path to the usage log file (for testing).
+ */
+export function setUsageLogPath(p: string): void {
+  usageLogPath = p;
 }
 
 /**
@@ -151,8 +158,9 @@ export async function trackEvent<T extends UsageEventType>(
       data,
     } as UsageEvent;
 
-    await ensureDir(path.dirname(USAGE_LOG_PATH));
-    await fs.appendFile(USAGE_LOG_PATH, JSON.stringify(entry) + "\n", "utf-8");
+    const logPath = getUsageLogPath();
+    await ensureDir(path.dirname(logPath));
+    await fs.appendFile(logPath, JSON.stringify(entry) + "\n", "utf-8");
   } catch (error) {
     // Fire-and-forget: log error but don't propagate
     console.error(`[cass-memory] Failed to track event: ${error}`);
@@ -263,11 +271,12 @@ export async function loadUsageEvents(options?: {
   since?: string;
   limit?: number;
 }): Promise<UsageEvent[]> {
-  if (!(await fileExists(USAGE_LOG_PATH))) {
+  const logPath = getUsageLogPath();
+  if (!(await fileExists(logPath))) {
     return [];
   }
 
-  const content = await fs.readFile(USAGE_LOG_PATH, "utf-8");
+  const content = await fs.readFile(logPath, "utf-8");
   const lines = content.split("\n").filter((line) => line.trim());
 
   let events: UsageEvent[] = [];

@@ -28,6 +28,7 @@ describe("Scoring Thresholds", () => {
     } as any);
 
     const bullet = createTestBullet({
+      maturity: "established", // remove candidate 0.5 multiplier
       feedbackEvents: [
         createTestFeedbackEvent("harmful", { timestamp: new Date().toISOString() }),
         createTestFeedbackEvent("harmful", { timestamp: new Date().toISOString() }),

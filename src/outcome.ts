@@ -7,7 +7,6 @@ import { getSanitizeConfig } from "./config.js";
 import { loadPlaybook, savePlaybook, findBullet } from "./playbook.js";
 import { calculateMaturityState } from "./scoring.js";
 import { withLock } from "./lock.js";
-import { ensureDir } from "./utils.js";
 
 // --- Types ---
 

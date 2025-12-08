@@ -1,9 +1,20 @@
+/**
+ * Integration tests for the Curator Pipeline
+ * Tests curatePlaybook() + validateDelta() interaction
+ *
+ * Philosophy: NO MOCKS - real implementations with validation disabled
+ * to avoid external dependencies (cass, LLM)
+ */
+import { describe, it, expect, beforeEach } from "bun:test";
+import { curatePlaybook } from "../src/curate.js";
+import { validateDelta, normalizeValidatorVerdict } from "../src/validate.js";
+import { PlaybookDelta, Config } from "../src/types.js";
 import {
   createTestConfig,
   createTestBullet,
   createTestPlaybook,
   createTestFeedbackEvent
-} from "./helpers/factories";
+} from "./helpers/factories.js";
 
 const isoNow = () => new Date().toISOString();
 

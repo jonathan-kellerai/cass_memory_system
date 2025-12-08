@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "bun:test";
+import { describe, it, expect, afterEach, afterAll } from "bun:test";
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "yaml";
@@ -72,6 +72,10 @@ mock.module("../src/cass.js", () => ({
 }));
 
 describe("reflectCommand integration", () => {
+  afterAll(() => {
+    mock.restore();
+  });
+
   const originalCwd = process.cwd();
 
   afterEach(() => {
@@ -113,4 +117,3 @@ describe("reflectCommand integration", () => {
     });
   });
 });
-

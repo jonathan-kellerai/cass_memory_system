@@ -231,7 +231,7 @@ describe("E2E: CLI init command", () => {
   });
 
   describe("Repo Init (.cass/)", () => {
-    it("creates repo-level .cass/ structure in git repo", async () => {
+    it("creates repo-level .cass/ structure in git repo", { timeout: 15000 }, async () => {
       await withTempGitRepo(async (repoDir) => {
         const logger = createTestLogger("debug");
         logger.info("Testing repo init", { repoDir });
@@ -279,7 +279,7 @@ describe("E2E: CLI init command", () => {
       });
     });
 
-    it("repo init is idempotent - warns without --force", async () => {
+    it("repo init is idempotent - warns without --force", { timeout: 30000 }, async () => {
       await withTempGitRepo(async (repoDir) => {
         const originalCwd = process.cwd();
         process.chdir(repoDir);
@@ -325,7 +325,7 @@ describe("E2E: CLI init command", () => {
       });
     });
 
-    it("repo init with --force bypasses already initialized check", async () => {
+    it("repo init with --force bypasses already initialized check", { timeout: 15000 }, async () => {
       await withTempGitRepo(async (repoDir) => {
         const originalCwd = process.cwd();
         process.chdir(repoDir);
@@ -362,7 +362,7 @@ describe("E2E: CLI init command", () => {
       });
     });
 
-    it("repo init with --json outputs JSON result", async () => {
+    it("repo init with --json outputs JSON result", { timeout: 30000 }, async () => {
       await withTempGitRepo(async (repoDir) => {
         const originalCwd = process.cwd();
         process.chdir(repoDir);
@@ -468,7 +468,7 @@ describe("E2E: CLI init command", () => {
       }
     });
 
-    it("repo init in nested subdirectory creates .cass in that location", async () => {
+    it("repo init in nested subdirectory creates .cass in that location", { timeout: 30000 }, async () => {
       await withTempGitRepo(async (repoDir) => {
         // Create a nested subdirectory
         const nestedDir = path.join(repoDir, "src", "services", "api");

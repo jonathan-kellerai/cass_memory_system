@@ -10,6 +10,7 @@ import {
   loadUsageEvents,
   getUsageStats,
   getUsageLogPath,
+  setUsageLogPath,
   type UsageEvent,
   type UsageEventType,
 } from "../src/tracking.js";
@@ -27,9 +28,11 @@ describe("Usage Analytics Tracking", () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "usage-test-"));
     testLogPath = path.join(tmpDir, "usage.jsonl");
     originalLogPath = getUsageLogPath();
+    setUsageLogPath(testLogPath);
   });
 
   afterEach(async () => {
+    setUsageLogPath(originalLogPath);
     try {
       await fs.rm(tmpDir, { recursive: true, force: true });
     } catch {}
@@ -37,7 +40,11 @@ describe("Usage Analytics Tracking", () => {
 
   describe("getUsageLogPath", () => {
     test("returns path in home directory", () => {
+      // Temporarily restore default path for this assertion
+      setUsageLogPath(originalLogPath);
       const logPath = getUsageLogPath();
+      // Restore test path for subsequent tests
+      setUsageLogPath(testLogPath);
       expect(logPath).toContain(".cass-memory");
       expect(logPath).toContain("usage.jsonl");
     });
