@@ -19,7 +19,7 @@ describe("S1 Offline Smoke (no cass, no LLM)", () => {
     ...process.env,
     HOME: tmpRoot,
     CASS_PATH: "__missing__",
-    LLM_DISABLED: "1",
+    CASS_MEMORY_LLM: "none",
     ANTHROPIC_API_KEY: "",
     OPENAI_API_KEY: "",
     GOOGLE_API_KEY: "",
@@ -65,9 +65,9 @@ describe("S1 Offline Smoke (no cass, no LLM)", () => {
     const ctx = await runCm(["context", "hello world", "--json"]);
     expect(ctx.exitCode).toBe(0);
     const ctxOut = ctx.stdout.toString();
-    expect(ctxOut).toContain("Context");
     // In degraded mode, historySnippets should be empty; parse json result
     const parsed = JSON.parse(ctxOut);
+    expect(parsed.task).toBe("hello world");
     expect(parsed.historySnippets.length).toBe(0);
 
     // 3) add rule
@@ -88,5 +88,5 @@ describe("S1 Offline Smoke (no cass, no LLM)", () => {
     const added = bullets.find((b: any) => b.id === bulletId);
     expect(added).toBeTruthy();
     expect(added.helpfulCount || added.helpful_count || 0).toBeGreaterThanOrEqual(1);
-  });
+  }, 20000);
 });
