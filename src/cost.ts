@@ -66,20 +66,44 @@ export async function recordCost(
   await updateTotalCost(costDir, cost);
 }
 
+interface TotalCostData {
+  allTime: number;
+  lastUpdated: string;
+  currentMonth?: { month: string; cost: number };
+  currentDay?: { day: string; cost: number };
+}
+
 async function updateTotalCost(costDir: string, amount: number): Promise<void> {
   const totalPath = path.join(costDir, "total.json");
+  const nowIso = now();
+  const today = nowIso.slice(0, 10); // YYYY-MM-DD
+  const month = nowIso.slice(0, 7);  // YYYY-MM
   
   await withLock(totalPath, async () => {
-    let total = { allTime: 0, lastUpdated: now() };
+    let total: TotalCostData = { allTime: 0, lastUpdated: nowIso };
     
     if (await fileExists(totalPath)) {
       try {
         total = JSON.parse(await fs.readFile(totalPath, "utf-8"));
-      } catch {} // Ignore errors, assume default if file is corrupt
+      } catch {} 
     }
     
-    total.allTime += amount;
-    total.lastUpdated = now();
+    // Update All Time
+    total.allTime = (total.allTime || 0) + amount;
+    
+    // Update Monthly
+    if (!total.currentMonth || total.currentMonth.month !== month) {
+      total.currentMonth = { month, cost: 0 };
+    }
+    total.currentMonth.cost += amount;
+    
+    // Update Daily
+    if (!total.currentDay || total.currentDay.day !== today) {
+      total.currentDay = { day: today, cost: 0 };
+    }
+    total.currentDay.cost += amount;
+    
+    total.lastUpdated = nowIso;
     
     await atomicWrite(totalPath, JSON.stringify(total, null, 2));
   });
@@ -90,40 +114,31 @@ export async function checkBudget(config: Config): Promise<{ allowed: boolean; r
   if (!budget) return { allowed: true }; // No budget set
 
   const costDir = expandPath("~/.cass-memory/cost");
-  if (!(await fileExists(costDir))) return { allowed: true };
-
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const month = new Date().toISOString().slice(0, 7); // YYYY-MM
-
-  // Calculate daily and monthly usage
-  // Note: This can be slow if logs are huge. Optimally we'd cache this.
-  // For V1, we scan the monthly file.
+  const totalPath = path.join(costDir, "total.json");
   
-  const logPath = path.join(costDir, `monthly-${month}.jsonl`);
-  if (!(await fileExists(logPath))) return { allowed: true };
+  // If total.json doesn't exist, we assume 0 cost (or legacy migration could happen here, 
+  // but scanning logs is expensive so we start fresh or rely on recordCost to init)
+  if (!(await fileExists(totalPath))) return { allowed: true };
 
-  const content = await fs.readFile(logPath, "utf-8");
-  const lines = content.split("\n").filter(l => l.trim());
-  
-  let dailyTotal = 0;
-  let monthlyTotal = 0;
+  try {
+    const total: TotalCostData = JSON.parse(await fs.readFile(totalPath, "utf-8"));
+    const today = new Date().toISOString().slice(0, 10);
+    const month = new Date().toISOString().slice(0, 7);
 
-  for (const line of lines) {
-    try {
-      const entry = JSON.parse(line) as CostEntry;
-      monthlyTotal += entry.cost;
-      if (entry.timestamp.startsWith(today)) {
-        dailyTotal += entry.cost;
-      }
-    } catch {} // Ignore invalid JSON lines
-  }
+    // Verify dates match current time to avoid using stale stats
+    const dailyCost = (total.currentDay?.day === today) ? (total.currentDay.cost || 0) : 0;
+    const monthlyCost = (total.currentMonth?.month === month) ? (total.currentMonth.cost || 0) : 0;
 
-  if (dailyTotal >= budget.dailyLimit) {
-    return { allowed: false, reason: `Daily budget exceeded ($${dailyTotal.toFixed(2)} / $${budget.dailyLimit.toFixed(2)})` };
-  }
+    if (dailyCost >= budget.dailyLimit) {
+      return { allowed: false, reason: `Daily budget exceeded ($${dailyCost.toFixed(2)} / $${budget.dailyLimit.toFixed(2)})` };
+    }
 
-  if (monthlyTotal >= budget.monthlyLimit) {
-    return { allowed: false, reason: `Monthly budget exceeded ($${monthlyTotal.toFixed(2)} / $${budget.monthlyLimit.toFixed(2)})` };
+    if (monthlyCost >= budget.monthlyLimit) {
+      return { allowed: false, reason: `Monthly budget exceeded ($${monthlyCost.toFixed(2)} / $${budget.monthlyLimit.toFixed(2)})` };
+    }
+  } catch (err) {
+    // If read fails, fail open but warn
+    console.warn(`[Cost] Failed to read budget file: ${err}`);
   }
 
   return { allowed: true };
@@ -136,38 +151,29 @@ export async function getUsageStats(config: Config): Promise<{
   dailyLimit: number;
   monthlyLimit: number;
 }> {
-  // Reuse logic from checkBudget but return numbers
   const costDir = expandPath("~/.cass-memory/cost");
-  const today = new Date().toISOString().slice(0, 10);
-  const month = new Date().toISOString().slice(0, 7);
+  const totalPath = path.join(costDir, "total.json");
   
   let dailyTotal = 0;
   let monthlyTotal = 0;
   let allTimeTotal = 0;
 
-  // Load total
-  const totalPath = path.join(costDir, "total.json");
   if (await fileExists(totalPath)) {
     try {
-        const t = JSON.parse(await fs.readFile(totalPath, "utf-8"));
-        allTimeTotal = t.allTime || 0;
-    } catch {} // Ignore errors, assume default if file is corrupt
-  }
+        const total: TotalCostData = JSON.parse(await fs.readFile(totalPath, "utf-8"));
+        const today = new Date().toISOString().slice(0, 10);
+        const month = new Date().toISOString().slice(0, 7);
 
-  // Load monthly
-  const logPath = path.join(costDir, `monthly-${month}.jsonl`);
-  if (await fileExists(logPath)) {
-      const content = await fs.readFile(logPath, "utf-8");
-      const lines = content.split("\n").filter(l => l.trim());
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line) as CostEntry;
-          monthlyTotal += entry.cost;
-          if (entry.timestamp.startsWith(today)) {
-            dailyTotal += entry.cost;
-          }
-        } catch {} // Ignore invalid JSON lines
-      }
+        allTimeTotal = total.allTime || 0;
+        
+        if (total.currentDay?.day === today) {
+            dailyTotal = total.currentDay.cost || 0;
+        }
+        
+        if (total.currentMonth?.month === month) {
+            monthlyTotal = total.currentMonth.cost || 0;
+        }
+    } catch {} 
   }
 
   return {
