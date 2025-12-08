@@ -1,12 +1,40 @@
 import http from "node:http";
+import { performance } from "node:perf_hooks";
 import { generateContextResult } from "./context.js";
 import { recordFeedback } from "./mark.js";
 import { recordOutcome, loadOutcomes } from "../outcome.js";
 import { loadConfig } from "../config.js";
 import { log, warn, error as logError } from "../utils.js";
-import { loadMergedPlaybook, getActiveBullets } from "../playbook.js";
-import { loadAllDiaries } from "../diary.js";
-import { safeCassSearch } from "../cass.js";
+import { loadMergedPlaybook, loadPlaybook, savePlaybook, getActiveBullets } from "../playbook.js";
+import { loadAllDiaries, generateDiary } from "../diary.js";
+import { safeCassSearch, findUnprocessedSessions } from "../cass.js";
+import { reflectOnSession } from "../reflect.js";
+import { validateDelta } from "../validate.js";
+import { curatePlaybook } from "../curate.js";
+import { ProcessedLog, getProcessedLogPath } from "../tracking.js";
+import { expandPath, now, fileExists } from "../utils.js";
+import { withLock } from "../lock.js";
+import type { PlaybookDelta } from "../types.js";
+
+// Simple per-tool argument validation helper to reduce drift.
+function assertArgs(args: any, required: Record<string, string>) {
+  if (!args) throw new Error("missing arguments");
+  for (const [key, type] of Object.entries(required)) {
+    const ok =
+      type === "array"
+        ? Array.isArray(args[key])
+        : typeof args[key] === type;
+    if (!ok) {
+      throw new Error(`invalid or missing '${key}' (expected ${type})`);
+    }
+  }
+}
+
+function maybeProfile(label: string, start: number) {
+  if (process.env.MCP_PROFILING !== "1") return;
+  const durMs = (performance.now() - start).toFixed(1);
+  log(`[mcp] ${label} took ${durMs}ms`, true);
+}
 
 type JsonRpcRequest = {
   jsonrpc?: string;
@@ -78,6 +106,20 @@ const TOOL_DEFS = [
       },
       required: ["query"]
     }
+  },
+  {
+    name: "memory_reflect",
+    description: "Trigger reflection on recent sessions to extract insights",
+    inputSchema: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "Look back this many days for sessions", default: 7 },
+        maxSessions: { type: "number", description: "Maximum sessions to process", default: 20 },
+        dryRun: { type: "boolean", description: "If true, return proposed changes without applying", default: false },
+        workspace: { type: "string", description: "Workspace path to limit session search" },
+        session: { type: "string", description: "Specific session path to reflect on" }
+      }
+    }
   }
 ];
 
@@ -99,9 +141,7 @@ const RESOURCE_DEFS = [
 async function handleToolCall(name: string, args: any): Promise<any> {
   switch (name) {
     case "cm_context": {
-      if (!args?.task || typeof args.task !== "string") {
-        throw new Error("cm_context requires 'task' (string)");
-      }
+      assertArgs(args, { task: "string" });
       const context = await generateContextResult(args.task, {
         top: args?.top,
         history: args?.history,
@@ -112,9 +152,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
       return context.result;
     }
     case "cm_feedback": {
-      if (!args?.bulletId) {
-        throw new Error("cm_feedback requires 'bulletId'");
-      }
+      assertArgs(args, { bulletId: "string" });
       const helpful = Boolean(args?.helpful);
       const harmful = Boolean(args?.harmful);
       if (!helpful && !harmful) {
@@ -129,14 +167,9 @@ async function handleToolCall(name: string, args: any): Promise<any> {
       return { success: true, ...result };
     }
     case "cm_outcome": {
-      if (!args?.outcome) {
-        throw new Error("cm_outcome requires 'outcome'");
-      }
+      assertArgs(args, { outcome: "string", sessionId: "string" });
       if (!["success", "failure", "partial"].includes(args.outcome)) {
         throw new Error("outcome must be success | failure | partial");
-      }
-      if (!args?.sessionId || typeof args.sessionId !== "string") {
-        throw new Error("cm_outcome requires 'sessionId'");
       }
       const config = await loadConfig();
       return recordOutcome({
@@ -149,9 +182,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
       }, config);
     }
     case "memory_search": {
-      if (!args?.query || typeof args.query !== "string") {
-        throw new Error("memory_search requires 'query' (string)");
-      }
+      assertArgs(args, { query: "string" });
       const scope: "playbook" | "cass" | "both" = args.scope || "both";
       const limit = typeof args?.limit === "number" ? args.limit : 10;
       const config = await loadConfig();
@@ -160,6 +191,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
       const q = args.query.toLowerCase();
 
       if (scope === "playbook" || scope === "both") {
+        const t0 = performance.now();
         const playbook = await loadMergedPlaybook(config);
         const bullets = getActiveBullets(playbook);
         result.playbook = bullets
@@ -175,15 +207,18 @@ async function handleToolCall(name: string, args: any): Promise<any> {
             scope: b.scope,
             maturity: b.maturity,
           }));
+        maybeProfile("memory_search playbook scan", t0);
       }
 
       if (scope === "cass" || scope === "both") {
+        const t0 = performance.now();
         const hits = await safeCassSearch(
           args.query,
           { limit },
           config.cassPath,
           config
         );
+        maybeProfile("memory_search cass search", t0);
         result.cass = hits.map((h) => ({
           path: h.source_path,
           agent: h.agent,
