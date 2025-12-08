@@ -4,8 +4,9 @@ import { recordFeedback } from "./mark.js";
 import { recordOutcome, loadOutcomes } from "../outcome.js";
 import { loadConfig } from "../config.js";
 import { log, warn, error as logError } from "../utils.js";
-import { loadMergedPlaybook } from "../playbook.js";
+import { loadMergedPlaybook, getActiveBullets } from "../playbook.js";
 import { loadAllDiaries } from "../diary.js";
+import { safeCassSearch } from "../cass.js";
 
 type JsonRpcRequest = {
   jsonrpc?: string;
@@ -63,6 +64,19 @@ const TOOL_DEFS = [
         durationSec: { type: "number" }
       },
       required: ["sessionId", "outcome"]
+    }
+  },
+  {
+    name: "memory_search",
+    description: "Search playbook bullets and/or cass history",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query text" },
+        scope: { type: "string", enum: ["playbook", "cass", "both"], default: "both" },
+        limit: { type: "number", default: 10 }
+      },
+      required: ["query"]
     }
   }
 ];
@@ -133,6 +147,53 @@ async function handleToolCall(name: string, args: any): Promise<any> {
         task: typeof args?.task === "string" ? args.task : undefined,
         durationSec: typeof args?.durationSec === "number" ? args.durationSec : undefined
       }, config);
+    }
+    case "memory_search": {
+      if (!args?.query || typeof args.query !== "string") {
+        throw new Error("memory_search requires 'query' (string)");
+      }
+      const scope: "playbook" | "cass" | "both" = args.scope || "both";
+      const limit = typeof args?.limit === "number" ? args.limit : 10;
+      const config = await loadConfig();
+
+      const result: { playbook?: any[]; cass?: any[] } = {};
+      const q = args.query.toLowerCase();
+
+      if (scope === "playbook" || scope === "both") {
+        const playbook = await loadMergedPlaybook(config);
+        const bullets = getActiveBullets(playbook);
+        result.playbook = bullets
+          .filter((b) => {
+            const haystack = `${b.content} ${b.category ?? ""} ${b.scope ?? ""}`.toLowerCase();
+            return haystack.includes(q);
+          })
+          .slice(0, limit)
+          .map((b) => ({
+            id: b.id,
+            content: b.content,
+            category: b.category,
+            scope: b.scope,
+            maturity: b.maturity,
+          }));
+      }
+
+      if (scope === "cass" || scope === "both") {
+        const hits = await safeCassSearch(
+          args.query,
+          { limit },
+          config.cassPath,
+          config
+        );
+        result.cass = hits.map((h) => ({
+          path: h.source_path,
+          agent: h.agent,
+          score: h.score,
+          snippet: h.snippet,
+          timestamp: h.timestamp,
+        }));
+      }
+
+      return result;
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
