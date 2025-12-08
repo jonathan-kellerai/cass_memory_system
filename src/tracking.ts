@@ -3,7 +3,357 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { ProcessedEntry } from "./types.js";
-import { ensureDir, fileExists, expandPath } from "./utils.js";
+import { ensureDir, fileExists, expandPath, now } from "./utils.js";
+
+// -----------------------------------------------------------------------------
+// Usage Analytics Types
+// -----------------------------------------------------------------------------
+
+/**
+ * Types of events tracked for usage analytics.
+ */
+export type UsageEventType =
+  | "bullet_marked"
+  | "command_run"
+  | "session_count"
+  | "reflection_stats"
+  | "playbook_change"
+  | "error_occurred";
+
+/**
+ * Base interface for all usage events.
+ */
+export interface UsageEventBase {
+  timestamp: string;
+  event: UsageEventType;
+}
+
+/**
+ * Event when a bullet is marked helpful/harmful.
+ */
+export interface BulletMarkedEvent extends UsageEventBase {
+  event: "bullet_marked";
+  data: {
+    bulletId: string;
+    feedback: "helpful" | "harmful";
+    reason?: string;
+    sessionPath?: string;
+  };
+}
+
+/**
+ * Event when a CLI command is run.
+ */
+export interface CommandRunEvent extends UsageEventBase {
+  event: "command_run";
+  data: {
+    command: string;
+    scope?: string;
+    duration_ms: number;
+    success: boolean;
+    error?: string;
+  };
+}
+
+/**
+ * Event tracking session discovery counts.
+ */
+export interface SessionCountEvent extends UsageEventBase {
+  event: "session_count";
+  data: {
+    provider: string;
+    count: number;
+    workspace?: string;
+  };
+}
+
+/**
+ * Event tracking reflection statistics.
+ */
+export interface ReflectionStatsEvent extends UsageEventBase {
+  event: "reflection_stats";
+  data: {
+    sessionsProcessed: number;
+    deltasProposed: number;
+    deltasApplied: number;
+    workspace?: string;
+  };
+}
+
+/**
+ * Event tracking playbook changes.
+ */
+export interface PlaybookChangeEvent extends UsageEventBase {
+  event: "playbook_change";
+  data: {
+    action: "add" | "remove" | "deprecate" | "update" | "merge";
+    bulletId?: string;
+    count?: number;
+  };
+}
+
+/**
+ * Event tracking errors for debugging.
+ */
+export interface ErrorOccurredEvent extends UsageEventBase {
+  event: "error_occurred";
+  data: {
+    category: string;
+    message: string;
+    command?: string;
+    stack?: string;
+  };
+}
+
+/**
+ * Union of all usage event types.
+ */
+export type UsageEvent =
+  | BulletMarkedEvent
+  | CommandRunEvent
+  | SessionCountEvent
+  | ReflectionStatsEvent
+  | PlaybookChangeEvent
+  | ErrorOccurredEvent;
+
+// -----------------------------------------------------------------------------
+// Usage Analytics Implementation
+// -----------------------------------------------------------------------------
+
+const USAGE_LOG_PATH = path.join(os.homedir(), ".cass-memory", "usage.jsonl");
+
+/**
+ * Get the path to the usage log file.
+ */
+export function getUsageLogPath(): string {
+  return USAGE_LOG_PATH;
+}
+
+/**
+ * Track a usage event by appending to the usage log.
+ * This is fire-and-forget - errors are logged but don't propagate.
+ *
+ * @param event - The event type
+ * @param data - Event-specific data
+ *
+ * @example
+ * trackEvent("bullet_marked", { bulletId: "b-123", feedback: "helpful" });
+ * trackEvent("command_run", { command: "reflect", duration_ms: 2340, success: true });
+ */
+export async function trackEvent<T extends UsageEventType>(
+  event: T,
+  data: Extract<UsageEvent, { event: T }>["data"]
+): Promise<void> {
+  try {
+    const entry: UsageEvent = {
+      timestamp: now(),
+      event,
+      data,
+    } as UsageEvent;
+
+    await ensureDir(path.dirname(USAGE_LOG_PATH));
+    await fs.appendFile(USAGE_LOG_PATH, JSON.stringify(entry) + "\n", "utf-8");
+  } catch (error) {
+    // Fire-and-forget: log error but don't propagate
+    console.error(`[cass-memory] Failed to track event: ${error}`);
+  }
+}
+
+/**
+ * Track a bullet being marked helpful/harmful.
+ */
+export async function trackBulletMarked(
+  bulletId: string,
+  feedback: "helpful" | "harmful",
+  options?: { reason?: string; sessionPath?: string }
+): Promise<void> {
+  await trackEvent("bullet_marked", {
+    bulletId,
+    feedback,
+    ...options,
+  });
+}
+
+/**
+ * Track a CLI command execution.
+ */
+export async function trackCommandRun(
+  command: string,
+  duration_ms: number,
+  success: boolean,
+  options?: { scope?: string; error?: string }
+): Promise<void> {
+  await trackEvent("command_run", {
+    command,
+    duration_ms,
+    success,
+    ...options,
+  });
+}
+
+/**
+ * Track session discovery counts.
+ */
+export async function trackSessionCount(
+  provider: string,
+  count: number,
+  workspace?: string
+): Promise<void> {
+  await trackEvent("session_count", {
+    provider,
+    count,
+    workspace,
+  });
+}
+
+/**
+ * Track reflection statistics.
+ */
+export async function trackReflectionStats(
+  sessionsProcessed: number,
+  deltasProposed: number,
+  deltasApplied: number,
+  workspace?: string
+): Promise<void> {
+  await trackEvent("reflection_stats", {
+    sessionsProcessed,
+    deltasProposed,
+    deltasApplied,
+    workspace,
+  });
+}
+
+/**
+ * Track playbook changes.
+ */
+export async function trackPlaybookChange(
+  action: "add" | "remove" | "deprecate" | "update" | "merge",
+  options?: { bulletId?: string; count?: number }
+): Promise<void> {
+  await trackEvent("playbook_change", {
+    action,
+    ...options,
+  });
+}
+
+/**
+ * Track errors for debugging.
+ */
+export async function trackError(
+  category: string,
+  message: string,
+  options?: { command?: string; stack?: string }
+): Promise<void> {
+  await trackEvent("error_occurred", {
+    category,
+    message,
+    ...options,
+  });
+}
+
+/**
+ * Load usage events from the log file.
+ * Optionally filter by event type and/or time range.
+ *
+ * @param options - Filter options
+ * @returns Array of usage events
+ */
+export async function loadUsageEvents(options?: {
+  eventType?: UsageEventType;
+  since?: string;
+  limit?: number;
+}): Promise<UsageEvent[]> {
+  if (!(await fileExists(USAGE_LOG_PATH))) {
+    return [];
+  }
+
+  const content = await fs.readFile(USAGE_LOG_PATH, "utf-8");
+  const lines = content.split("\n").filter((line) => line.trim());
+
+  let events: UsageEvent[] = [];
+
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line) as UsageEvent;
+      events.push(event);
+    } catch {
+      // Skip malformed lines
+      continue;
+    }
+  }
+
+  // Apply filters
+  if (options?.eventType) {
+    events = events.filter((e) => e.event === options.eventType);
+  }
+
+  if (options?.since) {
+    const sinceDate = new Date(options.since);
+    events = events.filter((e) => new Date(e.timestamp) >= sinceDate);
+  }
+
+  // Apply limit (from the end, most recent first)
+  if (options?.limit && events.length > options.limit) {
+    events = events.slice(-options.limit);
+  }
+
+  return events;
+}
+
+/**
+ * Get usage statistics summary.
+ */
+export async function getUsageStats(): Promise<{
+  totalEvents: number;
+  eventCounts: Record<UsageEventType, number>;
+  bulletFeedback: { helpful: number; harmful: number };
+  commandStats: { total: number; successful: number; failed: number };
+  lastActivity?: string;
+}> {
+  const events = await loadUsageEvents();
+
+  const eventCounts: Record<UsageEventType, number> = {
+    bullet_marked: 0,
+    command_run: 0,
+    session_count: 0,
+    reflection_stats: 0,
+    playbook_change: 0,
+    error_occurred: 0,
+  };
+
+  let helpful = 0;
+  let harmful = 0;
+  let commandTotal = 0;
+  let commandSuccess = 0;
+  let commandFailed = 0;
+
+  for (const event of events) {
+    eventCounts[event.event]++;
+
+    if (event.event === "bullet_marked" && event.data) {
+      if (event.data.feedback === "helpful") helpful++;
+      else harmful++;
+    }
+
+    if (event.event === "command_run" && event.data) {
+      commandTotal++;
+      if (event.data.success) commandSuccess++;
+      else commandFailed++;
+    }
+  }
+
+  return {
+    totalEvents: events.length,
+    eventCounts,
+    bulletFeedback: { helpful, harmful },
+    commandStats: {
+      total: commandTotal,
+      successful: commandSuccess,
+      failed: commandFailed,
+    },
+    lastActivity: events.length > 0 ? events[events.length - 1].timestamp : undefined,
+  };
+}
 
 // -----------------------------------------------------------------------------
 // Processed log paths
