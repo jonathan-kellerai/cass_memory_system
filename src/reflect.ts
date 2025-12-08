@@ -177,6 +177,7 @@ export async function reflectOnSession(
   const stubEnv = process.env.CM_REFLECTOR_STUBS;
   if (stubEnv) {
     try {
+      log("Using CM_REFLECTOR_STUBS");
       const stubIterations: { deltas: PlaybookDelta[] }[] = JSON.parse(stubEnv);
       const collected: PlaybookDelta[] = [];
 
@@ -191,7 +192,9 @@ export async function reflectOnSession(
         collected.push(...injected);
       }
 
-      return deduplicateDeltas(collected, []);
+      const deduped = deduplicateDeltas(collected, []);
+      log(`Stubbed reflection returning ${deduped.length} deltas`);
+      return deduped;
     } catch (err) {
       log(`Failed to parse CM_REFLECTOR_STUBS: ${err instanceof Error ? err.message : String(err)}`);
       // fall through to real flow

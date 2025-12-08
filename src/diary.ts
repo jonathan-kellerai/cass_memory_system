@@ -323,6 +323,11 @@ export async function generateDiary(
 ): Promise<DiaryEntry> {
   log(`Generating diary for ${sessionPath}...`);
 
+  // Fast path when LLMs are disabled or unavailable
+  if (process.env.CASS_MEMORY_LLM === "none") {
+    return generateDiaryFast(sessionPath, config);
+  }
+
   // 1. Export Session
   const rawContent = await cassExport(sessionPath, "markdown", config.cassPath);
   if (!rawContent) {
