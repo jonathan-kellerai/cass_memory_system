@@ -54,7 +54,10 @@ export async function recordCost(
   const month = new Date().toISOString().slice(0, 7); // YYYY-MM
   const logPath = path.join(costDir, `monthly-${month}.jsonl`);
   
-  await fs.appendFile(logPath, JSON.stringify(fullEntry) + "\n");
+  // Security: Do not log the full context (prompt) to disk as it may contain secrets
+  const { context, ...logEntry } = fullEntry;
+  
+  await fs.appendFile(logPath, JSON.stringify(logEntry) + "\n");
   
   // Update total
   await updateTotalCost(costDir, cost);

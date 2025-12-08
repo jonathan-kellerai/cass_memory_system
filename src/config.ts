@@ -131,6 +131,11 @@ export async function loadConfig(cliOverrides: Partial<Config> = {}): Promise<Co
   const repoContext = await detectRepoContext();
   if (repoContext.cassDir) {
     repoConfig = await loadConfigFile(path.join(repoContext.cassDir, "config.yaml"));
+    
+    // Security: Prevent repo from overriding sensitive paths
+    delete repoConfig.cassPath;
+    delete repoConfig.playbookPath;
+    delete repoConfig.diaryDir;
   }
 
   const merged = {

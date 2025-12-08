@@ -133,6 +133,7 @@ export interface ContextFlags {
   history?: number;
   days?: number;
   workspace?: string;
+  format?: "json" | "markdown";
 }
 
 export interface ContextComputation {
