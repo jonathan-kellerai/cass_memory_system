@@ -1,8 +1,9 @@
 import { getDefaultConfig, saveConfig } from "../config.js";
 import { createEmptyPlaybook, savePlaybook } from "../playbook.js";
-import { expandPath, fileExists, ensureDir, warn, log, resolveRepoDir, ensureRepoStructure } from "../utils.js";
+import { expandPath, fileExists, ensureDir, warn, log, resolveRepoDir, ensureRepoStructure, ensureGlobalStructure } from "../utils.js";
 import { cassAvailable } from "../cass.js";
 import chalk from "chalk";
+import yaml from "yaml";
 
 export async function initCommand(options: { force?: boolean; json?: boolean; repo?: boolean }) {
   // If --repo flag is provided, initialize repo-level .cass/ structure
@@ -13,12 +14,8 @@ export async function initCommand(options: { force?: boolean; json?: boolean; re
 
   const config = getDefaultConfig();
   const configPath = expandPath("~/.cass-memory/config.json");
-  const playbookPath = expandPath(config.playbookPath);
-  const diaryDir = expandPath(config.diaryDir);
-  const reflectionsDir = expandPath("~/.cass-memory/reflections");
-  const embeddingsDir = expandPath("~/.cass-memory/embeddings");
-  const costDir = expandPath("~/.cass-memory/cost");
-
+  const playbook = createEmptyPlaybook();
+  
   const alreadyInitialized = await fileExists(configPath);
 
   if (alreadyInitialized && !options.force) {
@@ -33,18 +30,11 @@ export async function initCommand(options: { force?: boolean; json?: boolean; re
     return;
   }
 
-  // 1. Create directories
-  await ensureDir(diaryDir);
-  await ensureDir(reflectionsDir);
-  await ensureDir(embeddingsDir);
-  await ensureDir(costDir);
-
-  // 2. Create default config
-  await saveConfig(config);
-
-  // 3. Create empty playbook
-  const playbook = createEmptyPlaybook();
-  await savePlaybook(playbook, playbookPath);
+  // Create structure
+  const result = await ensureGlobalStructure(
+    JSON.stringify(config, null, 2),
+    yaml.stringify(playbook)
+  );
 
   // 4. Check cass
   const cassOk = cassAvailable(config.cassPath);
@@ -58,13 +48,26 @@ export async function initCommand(options: { force?: boolean; json?: boolean; re
     console.log(JSON.stringify({
       success: true,
       configPath,
-      playbookPath,
+      created: result.created,
+      existed: result.existed,
       cassAvailable: cassOk
     }, null, 2));
   } else {
-    console.log(chalk.green("✓ Created ~/.cass-memory/config.json"));
-    console.log(chalk.green("✓ Created ~/.cass-memory/playbook.yaml"));
-    console.log(chalk.green(`✓ Created directories: ${diaryDir}, ${reflectionsDir}, ${embeddingsDir}`));
+    if (result.created.length > 0) {
+      for (const file of result.created) {
+        console.log(chalk.green(`✓ Created ~/.cass-memory/${file}`));
+      }
+    }
+    if (result.existed.length > 0) {
+      for (const file of result.existed) {
+        console.log(chalk.blue(`• ~/.cass-memory/${file} already exists`));
+      }
+    }
+    
+    // Ensure subdirectories are mentioned if created (implied by ensureGlobalStructure success)
+    const diaryDir = expandPath("~/.cass-memory/diary");
+    console.log(chalk.green(`✓ Verified directories: ${diaryDir} etc.`));
+
     console.log(`✓ cass available: ${cassOk ? chalk.green("yes") : chalk.red("no")}`);
     console.log("");
     console.log(chalk.bold("cass-memory initialized successfully!"));

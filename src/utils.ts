@@ -61,6 +61,76 @@ export async function resolveRepoDir(): Promise<string | null> {
   }
 }
 
+export function resolveGlobalDir(): string {
+  return expandPath("~/.cass-memory");
+}
+
+export async function ensureGlobalStructure(
+  defaultConfigStr?: string, 
+  defaultPlaybookStr?: string
+): Promise<{ created: string[], existed: string[] }> {
+  const globalDir = resolveGlobalDir();
+  const created: string[] = [];
+  const existed: string[] = [];
+
+  await ensureDir(globalDir);
+
+  // Subdirectories
+  const subdirs = ["diary", "reflections", "embeddings", "cost"];
+  for (const d of subdirs) {
+      await ensureDir(path.join(globalDir, d));
+  }
+
+  // config.json
+  const configPath = path.join(globalDir, "config.json");
+  if (await fileExists(configPath)) {
+      existed.push("config.json");
+  } else if (defaultConfigStr) {
+      await atomicWrite(configPath, defaultConfigStr);
+      created.push("config.json");
+  }
+
+  // playbook.yaml
+  const playbookPath = path.join(globalDir, "playbook.yaml");
+  if (await fileExists(playbookPath)) {
+      existed.push("playbook.yaml");
+  } else {
+      const content = defaultPlaybookStr || `# Global Playbook
+schema_version: 2
+name: global-playbook
+description: Personal global playbook rules
+metadata:
+  createdAt: ${new Date().toISOString()}
+  totalReflections: 0
+  totalSessionsProcessed: 0
+deprecatedPatterns: []
+bullets: []
+`;
+      await atomicWrite(playbookPath, content);
+      created.push("playbook.yaml");
+  }
+  
+  // toxic_bullets.log
+  const toxicPath = path.join(globalDir, "toxic_bullets.log");
+  if (await fileExists(toxicPath)) {
+      existed.push("toxic_bullets.log");
+  } else {
+      await atomicWrite(toxicPath, "");
+      created.push("toxic_bullets.log");
+  }
+
+  // usage.jsonl
+  const usagePath = path.join(globalDir, "usage.jsonl");
+  if (await fileExists(usagePath)) {
+      existed.push("usage.jsonl");
+  } else {
+      await atomicWrite(usagePath, "");
+      created.push("usage.jsonl");
+  }
+
+  return { created, existed };
+}
+
 /**
  * Ensure the .cass/ repo-level directory structure exists.
  * Creates the directory and initializes required files if missing.
