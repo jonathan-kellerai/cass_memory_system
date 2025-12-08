@@ -267,10 +267,14 @@ describe("loadMergedPlaybook", () => {
       const config = createTestConfig({ playbookPath: globalPath });
       const merged = await loadMergedPlaybook(config);
 
-      const contents = merged.bullets.map((b) => b.content);
-      expect(contents).not.toContain(blockedContent);
-      expect(contents).toContain("keep me");
-      expect(contents).toContain("repo keep");
+      const activeContents = getActiveBullets(merged).map((b) => b.content);
+      expect(activeContents).not.toContain(blockedContent);
+      expect(activeContents).toContain("keep me");
+      expect(activeContents).toContain("repo keep");
+
+      const blockedBullet = merged.bullets.find(b => b.content === blockedContent);
+      expect(blockedBullet?.deprecated).toBe(true);
+      expect(blockedBullet?.deprecationReason).toBe("BLOCKED_CONTENT");
     });
   });
 });
