@@ -5,7 +5,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { generateObject, type LanguageModel } from "ai";
+import { generateObject, generateText, type LanguageModel } from "ai";
 import { z } from "zod";
 import type { Config, DiaryEntry } from "./types";
 
@@ -139,7 +139,7 @@ export function validateApiKey(provider: string): void {
  * const { text } = await generateText({ model, prompt: "Hello!" });
  * ```
  */
-export function getModel(config: Config): LanguageModel {
+export function getModel(config: LLMConfig): LanguageModel {
   try {
     const provider = config.provider as "openai" | "anthropic" | "google";
     const apiKey = getApiKey(provider);
@@ -388,6 +388,38 @@ export function truncateForPrompt(content: string, maxChars = 50000): string {
  * @param config - Configuration with LLM settings
  * @returns Parsed output matching the provided schema
  */
+export async function extractDiary<T>(
+  schema: z.ZodSchema<T>,
+  sessionContent: string,
+  metadata: { sessionPath: string; agent: string; workspace?: string },
+  config: Config
+): Promise<T> {
+  const llmConfig: LLMConfig = {
+    provider: (config.llm?.provider ?? config.provider) as LLMProvider,
+    model: config.llm?.model ?? config.model,
+  };
+
+  const model = getModel(llmConfig);
+  
+  const truncatedContent = truncateForPrompt(sessionContent, 50000);
+
+  const prompt = fillPrompt(PROMPTS.diary, {
+    sessionPath: metadata.sessionPath,
+    agent: metadata.agent,
+    workspace: metadata.workspace || "unknown",
+    content: truncatedContent
+  });
+
+  const { object } = await generateObject({
+    model,
+    schema,
+    prompt,
+    temperature: 0.3,
+  });
+
+  return object;
+}
+
 export async function runReflector<T>(
   schema: z.ZodSchema<T>,
   diary: DiaryEntry,
@@ -522,7 +554,7 @@ export async function generateContext(
   config: Config
 ): Promise<string> {
   const llmConfig: LLMConfig = {
-    provider: config.llm?.provider ?? config.provider,
+    provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
   };
 
@@ -558,7 +590,7 @@ export async function generateSearchQueries(
   config: Config
 ): Promise<string[]> {
   const llmConfig: LLMConfig = {
-    provider: config.llm?.provider ?? config.provider,
+    provider: (config.llm?.provider ?? config.provider) as LLMProvider,
     model: config.llm?.model ?? config.model,
   };
 
