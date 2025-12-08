@@ -152,6 +152,169 @@ async function enrichWithRelatedSessions(
   return diary;
 }
 
+// --- Fast Extraction (No LLM) ---
+
+/**
+ * Infer session outcome from session content without LLM.
+ * Looks for error patterns, success indicators, etc.
+ * @public - Exported for testing
+ */
+export function inferOutcome(content: string): "success" | "failure" | "mixed" {
+  const lowerContent = content.toLowerCase();
+
+  const errorPatterns = [
+    /error:/i, /failed/i, /exception/i, /traceback/i,
+    /cannot\s+find/i, /not\s+found/i, /undefined/i, /null\s+reference/i,
+    /syntax\s*error/i, /type\s*error/i, /runtime\s*error/i
+  ];
+
+  const successPatterns = [
+    /successfully/i, /completed/i, /done/i, /fixed/i,
+    /works\s+(now|correctly)/i, /resolved/i, /passed/i,
+    /all\s+tests\s+pass/i, /build\s+successful/i
+  ];
+
+  const hasErrors = errorPatterns.some(p => p.test(content));
+  const hasSuccess = successPatterns.some(p => p.test(content));
+
+  if (hasErrors && hasSuccess) return "mixed";
+  if (hasErrors) return "failure";
+  if (hasSuccess) return "success";
+
+  return "success"; // Default to success if no clear indicators
+}
+
+/**
+ * Extract file paths mentioned in session content.
+ */
+function extractFilePaths(content: string): string[] {
+  const patterns = [
+    // Common file patterns
+    /[\w./\\-]+\.(ts|tsx|js|jsx|py|go|rs|java|c|cpp|h|hpp|md|json|yaml|yml|toml|txt|css|scss|html)/gi,
+    // src/ or test/ paths
+    /(?:src|test|lib|app|pages|components)[\/\\][\w./\\-]+/gi
+  ];
+
+  const matches = new Set<string>();
+  for (const pattern of patterns) {
+    const found = content.match(pattern) || [];
+    for (const f of found) {
+      // Clean up and normalize
+      const cleaned = f.replace(/^['"]+|['"]+$/g, "").replace(/\\+/g, "/");
+      if (cleaned.length > 3 && cleaned.length < 200) {
+        matches.add(cleaned);
+      }
+    }
+  }
+
+  return [...matches].slice(0, 20); // Limit to 20 files
+}
+
+/**
+ * Extract first user message as task description.
+ */
+function extractFirstUserMessage(content: string): string | undefined {
+  // Look for user message patterns
+  const patterns = [
+    /\*\*user\*\*:\s*(.+?)(?=\n\n|\n\*\*|$)/is,
+    /\*\*human\*\*:\s*(.+?)(?=\n\n|\n\*\*|$)/is,
+    /user:\s*(.+?)(?=\n\n|assistant:|$)/is
+  ];
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match && match[1]) {
+      const task = match[1].trim().slice(0, 500);
+      if (task.length > 10) return task;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Generate a brief summary from content without LLM.
+ * Extracts key information from the session.
+ */
+function generateQuickSummary(content: string, task?: string): string {
+  if (task && task.length > 20) {
+    return `Session: ${task.slice(0, 200)}`;
+  }
+
+  // Extract first meaningful line
+  const lines = content.split("\n").filter(l => l.trim().length > 20);
+  if (lines.length > 0) {
+    return lines[0].slice(0, 200);
+  }
+
+  return "Coding session";
+}
+
+/**
+ * Generate diary entry WITHOUT LLM (fast extraction).
+ * Uses heuristics to extract key information from session content.
+ *
+ * Use this for:
+ * - Quick session processing
+ * - Offline/local-only mode
+ * - Reducing LLM costs
+ * - Initial processing before full LLM extraction
+ */
+export async function generateDiaryFast(
+  sessionPath: string,
+  config: Config
+): Promise<DiaryEntry> {
+  log(`Generating diary (fast mode) for ${sessionPath}...`);
+
+  // 1. Export Session
+  const rawContent = await cassExport(sessionPath, "markdown", config.cassPath);
+  if (!rawContent) {
+    throw new Error(`Failed to export session: ${sessionPath}`);
+  }
+
+  // 2. Sanitize
+  const compiledPatterns = compileExtraPatterns(config.sanitization.extraPatterns || []);
+  const runtimeSanitizeConfig = {
+    enabled: config.sanitization.enabled,
+    extraPatterns: compiledPatterns,
+    auditLog: config.sanitization.auditLog
+  };
+  const sanitizedContent = sanitize(rawContent, runtimeSanitizeConfig);
+
+  // 3. Extract Metadata
+  const metadata = extractSessionMetadata(sessionPath);
+
+  // 4. Fast Extraction (no LLM)
+  const task = extractFirstUserMessage(sanitizedContent);
+  const outcome = inferOutcome(sanitizedContent);
+  const filesChanged = extractFilePaths(sanitizedContent);
+  const summary = generateQuickSummary(sanitizedContent, task);
+
+  // 5. Assemble Entry
+  const diary: DiaryEntry = {
+    id: generateDiaryId(sessionPath),
+    sessionPath,
+    timestamp: now(),
+    agent: metadata.agent,
+    workspace: metadata.workspace,
+    status: outcome,
+    accomplishments: task ? [task.slice(0, 200)] : [],
+    decisions: [],
+    challenges: [],
+    preferences: [],
+    keyLearnings: summary ? [summary] : [],
+    tags: filesChanged.slice(0, 5).map(f => path.basename(f)),
+    searchAnchors: extractKeywords(summary + " " + (task || "")),
+    relatedSessions: []
+  };
+
+  // 6. Save
+  await saveDiary(diary, config);
+  log(`Saved fast diary to ${expandPath(config.diaryDir)}/${diary.id}.json`);
+
+  return diary;
+}
+
 // --- Main Generator ---
 
 export async function generateDiary(

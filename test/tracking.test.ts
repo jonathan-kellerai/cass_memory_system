@@ -61,10 +61,11 @@ describe("ProcessedLog - Load", () => {
   it("loads entries from existing file", async () => {
     await withTempDir("tracking-load", async (tempDir) => {
       const logPath = join(tempDir, "processed.tsv");
+      // Using JSONL format
       const content = [
-        "# id\tsessionPath\tprocessedAt\tdeltasProposed\tdeltasApplied",
-        "diary-abc\t/path/to/session1.jsonl\t2024-01-01T00:00:00Z\t5\t0",
-        "diary-def\t/path/to/session2.jsonl\t2024-01-02T00:00:00Z\t3\t0",
+        "# JSONL header",
+        JSON.stringify({ sessionPath: "/path/to/session1.jsonl", processedAt: "2024-01-01T00:00:00Z", deltasGenerated: 5 }),
+        JSON.stringify({ sessionPath: "/path/to/session2.jsonl", processedAt: "2024-01-02T00:00:00Z", deltasGenerated: 3 }),
       ].join("\n");
       await writeFile(logPath, content);
 
@@ -95,7 +96,7 @@ describe("ProcessedLog - Load", () => {
       const content = [
         "# This is a header comment",
         "# Another comment",
-        "diary-abc\t/path/session.jsonl\t2024-01-01T00:00:00Z\t1\t0",
+        JSON.stringify({ sessionPath: "/path/session.jsonl" }),
         "# Trailing comment",
       ].join("\n");
       await writeFile(logPath, content);
@@ -114,9 +115,9 @@ describe("ProcessedLog - Load", () => {
       const content = [
         "# header",
         "",
-        "diary-abc\t/path/session.jsonl\t2024-01-01T00:00:00Z\t1\t0",
+        JSON.stringify({ sessionPath: "/path/session.jsonl" }),
         "",
-        "diary-def\t/path/session2.jsonl\t2024-01-02T00:00:00Z\t2\t0",
+        JSON.stringify({ sessionPath: "/path/session2.jsonl" }),
         "",
       ].join("\n");
       await writeFile(logPath, content);
@@ -133,10 +134,10 @@ describe("ProcessedLog - Load", () => {
       const logPath = join(tempDir, "processed.tsv");
       const content = [
         "# header",
-        "invalid-no-tabs",
-        "diary-abc\t/path/session.jsonl\t2024-01-01T00:00:00Z\t1\t0",
-        "only-one-field",
-        "diary-def\t/path/session2.jsonl\t2024-01-02T00:00:00Z\t2\t0",
+        "invalid-json",
+        JSON.stringify({ sessionPath: "/path/session.jsonl" }),
+        "{ incomplete json",
+        JSON.stringify({ sessionPath: "/path/session2.jsonl" }),
       ].join("\n");
       await writeFile(logPath, content);
 
@@ -153,7 +154,7 @@ describe("ProcessedLog - Load", () => {
       const logPath = join(tempDir, "processed.tsv");
       const content = [
         "# header",
-        "-\t/path/session.jsonl\t2024-01-01T00:00:00Z\t1\t0",
+        JSON.stringify({ sessionPath: "/path/session.jsonl" }), // No diaryId
       ].join("\n");
       await writeFile(logPath, content);
 
@@ -169,7 +170,7 @@ describe("ProcessedLog - Load", () => {
       const logPath = join(tempDir, "processed.tsv");
       const content = [
         "# header",
-        "diary-abc\t/path/session.jsonl\t2024-01-01T00:00:00Z",
+        JSON.stringify({ sessionPath: "/path/session.jsonl" }),
       ].join("\n");
       await writeFile(logPath, content);
 
@@ -242,7 +243,7 @@ describe("ProcessedLog - Save", () => {
     });
   });
 
-  it("uses dash for missing diary ID", async () => {
+  it("omits missing diary ID", async () => {
     await withTempDir("tracking-dash", async (tempDir) => {
       const logPath = join(tempDir, "processed.tsv");
       const log = new ProcessedLog(logPath);
@@ -260,7 +261,8 @@ describe("ProcessedLog - Save", () => {
       const lines = content.split("\n");
       const dataLine = lines.find(l => !l.startsWith("#") && l.includes("/path/session.jsonl"));
       const parsed = JSON.parse(dataLine || "{}");
-      expect(parsed.diaryId).toBe("-");
+      // Should be undefined or not present
+      expect(parsed.diaryId).toBeUndefined();
     });
   });
 
@@ -607,15 +609,16 @@ describe("ProcessedLog - Edge Cases", () => {
       const logPath = join(tempDir, "processed.tsv");
       const content = [
         "# header",
-        "diary-abc\t\t2024-01-01T00:00:00Z\t1\t0",
-        "diary-def\t/valid/session.jsonl\t2024-01-02T00:00:00Z\t2\t0",
+        JSON.stringify({ sessionPath: "", processedAt: "2024-01-01T00:00:00Z" }),
+        JSON.stringify({ sessionPath: "/valid/session.jsonl", processedAt: "2024-01-02T00:00:00Z" }),
       ].join("\n");
       await writeFile(logPath, content);
 
       const log = new ProcessedLog(logPath);
       await log.load();
 
-      // Empty path should be skipped
+      // Empty path should be skipped or handled (if implementation skips)
+      // Current implementation checks if (entry.sessionPath)
       expect(log.has("")).toBe(false);
       expect(log.has("/valid/session.jsonl")).toBe(true);
     });

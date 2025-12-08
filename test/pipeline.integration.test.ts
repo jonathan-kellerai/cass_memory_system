@@ -64,8 +64,9 @@ describe("Pipeline integration: diary -> reflect -> curate (stubbed LLM)", () =>
       id: "b-invert",
       content: "Always deploy without checks",
       category: "testing",
-      harmfulCount: 2,
+      harmfulCount: 3,
       feedbackEvents: [
+        createTestFeedbackEvent("harmful", 0),
         createTestFeedbackEvent("harmful", 0),
         createTestFeedbackEvent("harmful", 0)
       ]

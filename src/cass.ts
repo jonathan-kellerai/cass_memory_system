@@ -38,20 +38,6 @@ export interface CassAvailabilityResult {
 
 // --- Helpers ---
 
-function normalizeSanitizeConfig(config: Config) {
-  const sanitizeConfig = getSanitizeConfig(config);
-  return {
-    ...sanitizeConfig,
-    extraPatterns: (sanitizeConfig.extraPatterns || []).map((p: any) =>
-      typeof p === "string" ? new RegExp(p, "g") : p
-    )
-  };
-}
-
-function sanitizeWithConfig(text: string, config: Config): string {
-  return sanitize(text, normalizeSanitizeConfig(config));
-}
-
 function coerceContent(raw: any): string | null {
   if (!raw) return null;
   if (typeof raw === "string") return raw;
@@ -216,11 +202,44 @@ export async function cassSearch(
       timeout: (options.timeout || 30) * 1000
     });
 
-    const rawHits = JSON.parse(stdout);
+    let rawHits: any;
+    try {
+      rawHits = JSON.parse(stdout);
+    } catch (parseErr) {
+      // Fallback: Try to find JSON array in stdout (e.g. ignore leading warnings)
+      const jsonStart = stdout.indexOf('[');
+      if (jsonStart > -1) {
+        try {
+          rawHits = JSON.parse(stdout.substring(jsonStart));
+        } catch {
+          // Inner parse failed, throw original error
+          throw parseErr;
+        }
+      } else {
+        // Check for single object response just in case
+        const objStart = stdout.indexOf('{');
+        if (objStart > -1) {
+          try {
+             rawHits = [JSON.parse(stdout.substring(objStart))]; // Treat as array
+          } catch {
+             throw parseErr;
+          }
+        } else {
+          throw parseErr;
+        }
+      }
+    }
+
     // Validate and parse with Zod
-    return rawHits.map((h: any) => CassHitSchema.parse(h));
+    return Array.isArray(rawHits) 
+      ? rawHits.map((h: any) => CassHitSchema.parse(h))
+      : [CassHitSchema.parse(rawHits)];
+
   } catch (err: any) {
     if (err.code === CASS_EXIT_CODES.NOT_FOUND) return [];
+    if (err instanceof SyntaxError) {
+        error(`Failed to parse cass output: ${err.message}`);
+    }
     throw err;
   }
 }
@@ -341,6 +360,11 @@ export async function handleSessionExportFailure(
     const fileContent = await fs.readFile(path.resolve(sessionPath), "utf-8");
     const ext = path.extname(sessionPath).toLowerCase();
     const activeConfig = config || await loadConfig();
+    const sanitizeConfig = getSanitizeConfig(activeConfig);
+    const compiledConfig = {
+      ...sanitizeConfig,
+      extraPatterns: compileExtraPatterns(sanitizeConfig.extraPatterns)
+    };
 
     if (ext === ".jsonl") {
       const parsed = fileContent
@@ -355,7 +379,7 @@ export async function handleSessionExportFailure(
           }
         });
       const joined = joinMessages(parsed);
-      return joined ? sanitizeWithConfig(joined, activeConfig) : null;
+      return joined ? sanitize(joined, compiledConfig) : null;
     }
 
     if (ext === ".json") {
@@ -367,7 +391,7 @@ export async function handleSessionExportFailure(
             ? parsed.messages
             : null;
         const joined = messages ? joinMessages(messages) : null;
-        return joined ? sanitizeWithConfig(joined, activeConfig) : null;
+        return joined ? sanitize(joined, compiledConfig) : null;
       } catch (parseErr: any) {
         log(`Fallback JSON parse failed for ${sessionPath}: ${parseErr.message}`, true);
         return null;
@@ -375,7 +399,7 @@ export async function handleSessionExportFailure(
     }
 
     if (ext === ".md") {
-      return sanitizeWithConfig(fileContent, activeConfig);
+      return sanitize(fileContent, compiledConfig);
     }
   } catch (readErr: any) {
     log(`Fallback read failed for ${sessionPath}: ${readErr.message}`, true);
@@ -400,8 +424,12 @@ export async function cassExpand(
 
     // Sanitize expanded output
     const activeConfig = config || await loadConfig();
-    const sanitizeConfig = normalizeSanitizeConfig(activeConfig);
-    return sanitize(stdout, sanitizeConfig);
+    const sanitizeConfig = getSanitizeConfig(activeConfig);
+    const compiledConfig = {
+      ...sanitizeConfig,
+      extraPatterns: compileExtraPatterns(sanitizeConfig.extraPatterns)
+    };
+    return sanitize(stdout, compiledConfig);
   } catch (err: any) {
     return null;
   }

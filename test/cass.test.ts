@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { 
   cassAvailable, 
   handleCassUnavailable, 
@@ -18,10 +18,12 @@ describe("cass.ts core functions (stubbed)", () => {
 
   beforeEach(() => {
     originalPath = process.env.PATH;
+    mock.restore();
   });
 
   afterEach(() => {
     process.env.PATH = originalPath;
+    delete process.env.CASS_PATH;
   });
 
   it("cassAvailable detects stub", async () => {
@@ -32,7 +34,11 @@ describe("cass.ts core functions (stubbed)", () => {
   });
 
   it("handleCassUnavailable falls back when cass missing", async () => {
+    const savedPath = process.env.PATH;
+    process.env.PATH = "/nonexistent";
+    process.env.CASS_PATH = "/no/cass";
     const result = await handleCassUnavailable({ cassPath: "/no/cass", searchCommonPaths: false });
+    process.env.PATH = savedPath;
     expect(result.fallbackMode).toBe("playbook-only");
     expect(result.canContinue).toBe(true);
   });

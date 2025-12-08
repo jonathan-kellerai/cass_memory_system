@@ -128,13 +128,26 @@ export async function generateContextResult(
   const rules = topBullets.filter(b => !b.isNegative && b.kind !== "anti_pattern");
   const antiPatterns = topBullets.filter(b => b.isNegative || b.kind === "anti_pattern");
 
-  const cassQuery = keywords.join(" ");
-  // Pass config to safeCassSearch to enable sanitization of search results
-  const cassHits = await safeCassSearch(cassQuery, {
-    limit: flags.history || config.maxHistoryInContext,
-    days: flags.days || config.sessionLookbackDays,
-    workspace: flags.workspace
-  }, config.cassPath, config);
+  // Check cass availability first
+  const { cassAvailable, handleCassUnavailable } = await import("../cass.js");
+  const availability = await handleCassUnavailable({ cassPath: config.cassPath });
+  
+  let cassHits: CassSearchHit[] = [];
+  
+  if (availability.canContinue && availability.fallbackMode === "none") {
+    const cassQuery = keywords.join(" ");
+    // Pass config to safeCassSearch to enable sanitization of search results
+    cassHits = await safeCassSearch(cassQuery, {
+      limit: flags.history || config.maxHistoryInContext,
+      days: flags.days || config.sessionLookbackDays,
+      workspace: flags.workspace
+    }, config.cassPath, config);
+  } else {
+    // Degraded mode
+    if (!flags.json) { // Only log if not JSON output to keep stdout clean
+       warn(availability.message);
+    }
+  }
 
   const warnings: string[] = [];
   const historyWarnings = checkDeprecatedPatterns(cassHits, playbook.deprecatedPatterns);

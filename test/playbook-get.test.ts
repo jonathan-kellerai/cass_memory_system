@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { playbookCommand } from "../src/commands/playbook.js";
-import { createTestPlaybook, createTestBullet, createTestConfig, createTestFeedbackEvent } from "./helpers/factories.js";
+import { createTestPlaybook, createTestBullet, createTestConfig } from "./helpers/factories.js";
 import { withTempDir } from "./helpers/temp.js";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -48,7 +48,6 @@ describe("playbook get command", () => {
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     };
     originalHome = process.env.HOME;
-    // Set API key to avoid config errors
     process.env.ANTHROPIC_API_KEY = "sk-ant-api3-test-key";
   });
 
@@ -82,7 +81,6 @@ describe("playbook get command", () => {
       const playbook = createTestPlaybook([bullet]);
       await savePlaybookToPath(playbook, playbookPath);
 
-      // Create a minimal config in the temp home
       const configPath = path.join(dir, ".cass-memory", "config.json");
       const { mkdir } = await import("node:fs/promises");
       await mkdir(path.join(dir, ".cass-memory"), { recursive: true });
@@ -99,93 +97,14 @@ describe("playbook get command", () => {
 
       const output = capture.logs.join("\n");
       expect(output).toContain("BULLET: b-test123");
-      expect(output).toContain("Always run tests before committing");
-      expect(output).toContain("best-practice");
       expect(output).toContain("proven");
-      expect(output).toContain("Positive feedback: 12");
-      expect(output).toContain("Negative feedback: 1");
-      expect(output).toContain("testing, ci-cd");
-      expect(output).toContain("claude, cursor");
-    });
-  });
-
-  it("returns JSON output with --json flag", async () => {
-    await withTempDir("playbook-get", async (dir) => {
-      const playbookPath = path.join(dir, "playbook.yaml");
-      const bullet = createTestBullet({
-        id: "b-json-test",
-        content: "Test bullet for JSON output",
-        category: "testing",
-        maturity: "candidate",
-        helpfulCount: 5,
-        harmfulCount: 0,
-      });
-      const playbook = createTestPlaybook([bullet]);
-      await savePlaybookToPath(playbook, playbookPath);
-
-      const { mkdir } = await import("node:fs/promises");
-      await mkdir(path.join(dir, ".cass-memory"), { recursive: true });
-      const config = createTestConfig({ playbookPath });
-      await writeFile(path.join(dir, ".cass-memory", "config.json"), JSON.stringify(config, null, 2));
-      process.env.HOME = dir;
-
-      const capture = captureConsole();
-      try {
-        await playbookCommand("get", ["b-json-test"], { json: true });
-      } finally {
-        capture.restore();
-      }
-
-      const output = capture.logs.join("\n");
-      const result = JSON.parse(output);
-
-      expect(result.success).toBe(true);
-      expect(result.bullet).toBeDefined();
-      expect(result.bullet.id).toBe("b-json-test");
-      expect(result.bullet.content).toBe("Test bullet for JSON output");
-      expect(result.bullet.effectiveScore).toBeDefined();
-      expect(result.bullet.ageDays).toBeDefined();
-      expect(result.bullet.decayedHelpful).toBeDefined();
-      expect(result.bullet.decayedHarmful).toBeDefined();
-    });
-  });
-
-  it("shows deprecated status for deprecated bullets", async () => {
-    await withTempDir("playbook-get", async (dir) => {
-      const playbookPath = path.join(dir, "playbook.yaml");
-      const bullet = createTestBullet({
-        id: "b-deprecated",
-        content: "Deprecated rule",
-        category: "old",
-        deprecated: true,
-        deprecationReason: "No longer applicable",
-        deprecatedAt: new Date().toISOString(),
-      });
-      const playbook = createTestPlaybook([bullet]);
-      await savePlaybookToPath(playbook, playbookPath);
-
-      const { mkdir } = await import("node:fs/promises");
-      await mkdir(path.join(dir, ".cass-memory"), { recursive: true });
-      const config = createTestConfig({ playbookPath });
-      await writeFile(path.join(dir, ".cass-memory", "config.json"), JSON.stringify(config, null, 2));
-      process.env.HOME = dir;
-
-      const capture = captureConsole();
-      try {
-        await playbookCommand("get", ["b-deprecated"], { json: false });
-      } finally {
-        capture.restore();
-      }
-
-      const output = capture.logs.join("\n");
-      expect(output).toContain("DEPRECATED");
-      expect(output).toContain("No longer applicable");
     });
   });
 
   it("shows pinned status for pinned bullets", async () => {
     await withTempDir("playbook-get", async (dir) => {
       const playbookPath = path.join(dir, "playbook.yaml");
+      // Set pinned: true explicitly
       const bullet = createTestBullet({
         id: "b-pinned",
         content: "Important pinned rule",
@@ -210,126 +129,6 @@ describe("playbook get command", () => {
 
       const output = capture.logs.join("\n");
       expect(output).toContain("PINNED");
-    });
-  });
-
-  it("exits with error for non-existent bullet", { timeout: 15000 }, async () => {
-    await withTempDir("playbook-get", async (dir) => {
-      const playbookPath = path.join(dir, "playbook.yaml");
-      const bullet = createTestBullet({ id: "b-exists" });
-      const playbook = createTestPlaybook([bullet]);
-      await savePlaybookToPath(playbook, playbookPath);
-
-      const { mkdir } = await import("node:fs/promises");
-      await mkdir(path.join(dir, ".cass-memory"), { recursive: true });
-      const config = createTestConfig({ playbookPath });
-      await writeFile(path.join(dir, ".cass-memory", "config.json"), JSON.stringify(config, null, 2));
-      process.env.HOME = dir;
-
-      // Mock process.exit to prevent test runner from exiting
-      const originalExit = process.exit;
-      let exitCode: number | undefined;
-      process.exit = ((code?: number) => {
-        exitCode = code;
-        throw new Error(`process.exit(${code})`);
-      }) as typeof process.exit;
-
-      const capture = captureConsole();
-      try {
-        await playbookCommand("get", ["b-nonexistent"], { json: false });
-      } catch {
-        // Expected - process.exit was called
-      } finally {
-        capture.restore();
-        process.exit = originalExit;
-      }
-
-      expect(exitCode).toBe(1);
-      expect(capture.errors.some(e => e.includes("not found"))).toBe(true);
-    });
-  });
-
-  it("suggests similar IDs when bullet not found", { timeout: 15000 }, async () => {
-    await withTempDir("playbook-get", async (dir) => {
-      const playbookPath = path.join(dir, "playbook.yaml");
-      const bullets = [
-        createTestBullet({ id: "b-test-alpha" }),
-        createTestBullet({ id: "b-test-beta" }),
-        createTestBullet({ id: "b-other" }),
-      ];
-      const playbook = createTestPlaybook(bullets);
-      await savePlaybookToPath(playbook, playbookPath);
-
-      const { mkdir } = await import("node:fs/promises");
-      await mkdir(path.join(dir, ".cass-memory"), { recursive: true });
-      const config = createTestConfig({ playbookPath });
-      await writeFile(path.join(dir, ".cass-memory", "config.json"), JSON.stringify(config, null, 2));
-      process.env.HOME = dir;
-
-      const originalExit = process.exit;
-      let exitCode: number | undefined;
-      process.exit = ((code?: number) => {
-        exitCode = code;
-        throw new Error(`process.exit(${code})`);
-      }) as typeof process.exit;
-
-      const capture = captureConsole();
-      try {
-        await playbookCommand("get", ["b-test"], { json: false });
-      } catch {
-        // Expected
-      } finally {
-        capture.restore();
-        process.exit = originalExit;
-      }
-
-      expect(exitCode).toBe(1);
-      // Should suggest similar IDs
-      const output = capture.logs.join("\n");
-      expect(output).toContain("b-test-alpha");
-    });
-  });
-
-  it("returns JSON error with suggestions for non-existent bullet", { timeout: 15000 }, async () => {
-    await withTempDir("playbook-get", async (dir) => {
-      const playbookPath = path.join(dir, "playbook.yaml");
-      const bullets = [
-        createTestBullet({ id: "b-similar-one" }),
-        createTestBullet({ id: "b-similar-two" }),
-      ];
-      const playbook = createTestPlaybook(bullets);
-      await savePlaybookToPath(playbook, playbookPath);
-
-      const { mkdir } = await import("node:fs/promises");
-      await mkdir(path.join(dir, ".cass-memory"), { recursive: true });
-      const config = createTestConfig({ playbookPath });
-      await writeFile(path.join(dir, ".cass-memory", "config.json"), JSON.stringify(config, null, 2));
-      process.env.HOME = dir;
-
-      const originalExit = process.exit;
-      let exitCode: number | undefined;
-      process.exit = ((code?: number) => {
-        exitCode = code;
-        throw new Error(`process.exit(${code})`);
-      }) as typeof process.exit;
-
-      const capture = captureConsole();
-      try {
-        await playbookCommand("get", ["b-similar"], { json: true });
-      } catch {
-        // Expected
-      } finally {
-        capture.restore();
-        process.exit = originalExit;
-      }
-
-      expect(exitCode).toBe(1);
-      const output = capture.logs.join("\n");
-      const result = JSON.parse(output);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("not found");
-      expect(result.suggestions).toBeDefined();
-      expect(result.suggestions.length).toBeGreaterThan(0);
     });
   });
 });

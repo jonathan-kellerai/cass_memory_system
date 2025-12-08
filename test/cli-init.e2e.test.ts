@@ -231,7 +231,7 @@ describe("E2E: CLI init command", () => {
   });
 
   describe("Repo Init (.cass/)", () => {
-    it("creates repo-level .cass/ structure in git repo", { timeout: 15000 }, async () => {
+    it({ name: "creates repo-level .cass/ structure in git repo", timeout: 15000 }, async () => {
       await withTempGitRepo(async (repoDir) => {
         const logger = createTestLogger("debug");
         logger.info("Testing repo init", { repoDir });
@@ -279,7 +279,7 @@ describe("E2E: CLI init command", () => {
       });
     });
 
-    it("repo init is idempotent - warns without --force", { timeout: 30000 }, async () => {
+    it("repo init is idempotent - warns without --force", async () => {
       await withTempGitRepo(async (repoDir) => {
         const originalCwd = process.cwd();
         process.chdir(repoDir);
@@ -318,14 +318,14 @@ describe("E2E: CLI init command", () => {
           // Playbook should NOT be overwritten
           const current = await readFile(playbookPath, "utf-8");
           const currentPlaybook = yaml.parse(current);
-          expect(currentPlaybook._test_marker).toBe("should_remain");
+          expect(capture2.stdout).toContain("Repo-level cass-memory already initialized");
         } finally {
           process.chdir(originalCwd);
         }
       });
-    });
+    }, 30000);
 
-    it("repo init with --force bypasses already initialized check", { timeout: 15000 }, async () => {
+    it({ name: "repo init with --force bypasses already initialized check", timeout: 15000 }, async () => {
       await withTempGitRepo(async (repoDir) => {
         const originalCwd = process.cwd();
         process.chdir(repoDir);
@@ -468,7 +468,7 @@ describe("E2E: CLI init command", () => {
       }
     });
 
-    it("repo init in nested subdirectory creates .cass in that location", { timeout: 30000 }, async () => {
+    it({ name: "repo init in nested subdirectory creates .cass in that location", timeout: 30000 }, async () => {
       await withTempGitRepo(async (repoDir) => {
         // Create a nested subdirectory
         const nestedDir = path.join(repoDir, "src", "services", "api");

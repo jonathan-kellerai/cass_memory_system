@@ -34,9 +34,10 @@ export async function scanSessionsForViolations(
         const rulesList = activeBullets.map(b => `- [${b.id}] ${b.content}`).join("\n");
         const safeContent = content.slice(0, 20000);
 
-        const prompt = PROMPTS.audit
-          .replace("{sessionContent}", safeContent)
-          .replace("{rulesToCheck}", rulesList);
+        const prompt = fillPrompt(PROMPTS.audit, {
+          sessionContent: safeContent,
+          rulesToCheck: rulesList
+        });
 
         // Use fallback for resilience
         const result = await llmWithFallback(

@@ -5,9 +5,6 @@ import path from "node:path";
 import { applyOutcomeFeedback, OutcomeRecord } from "../src/outcome.js";
 import { createTestBullet, createTestConfig } from "./helpers/factories.js";
 import { savePlaybook } from "../src/playbook.js";
-import fs from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
 
 async function withTempPlaybook(run: (playbookPath: string) => Promise<void>) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cass-outcome-"));
@@ -87,4 +84,3 @@ describe("applyOutcomeFeedback", () => {
     });
   });
 });
-

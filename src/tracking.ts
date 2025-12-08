@@ -4,6 +4,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { ProcessedEntry } from "./types.js";
 import { ensureDir, fileExists, expandPath, now } from "./utils.js";
+import { sanitize } from "./sanitize.js";
 
 // -----------------------------------------------------------------------------
 // Usage Analytics Types
@@ -152,10 +153,25 @@ export async function trackEvent<T extends UsageEventType>(
   data: Extract<UsageEvent, { event: T }>["data"]
 ): Promise<void> {
   try {
+    // Sanitize sensitive fields before logging
+    const safeData = { ...data };
+    
+    if (event === "command_run") {
+      const d = safeData as CommandRunEvent["data"];
+      if (d.error) d.error = sanitize(d.error);
+    } else if (event === "bullet_marked") {
+      const d = safeData as BulletMarkedEvent["data"];
+      if (d.reason) d.reason = sanitize(d.reason);
+    } else if (event === "error_occurred") {
+      const d = safeData as ErrorOccurredEvent["data"];
+      if (d.message) d.message = sanitize(d.message);
+      if (d.stack) d.stack = sanitize(d.stack);
+    }
+
     const entry: UsageEvent = {
       timestamp: now(),
       event,
-      data,
+      data: safeData,
     } as UsageEvent;
 
     const logPath = getUsageLogPath();
