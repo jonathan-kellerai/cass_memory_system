@@ -16,8 +16,8 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
-    "typeRoots": ["./node_modules/@types", "./node_modules/bun-types"],
-    "types": ["bun", "node"]
+    "typeRoots": ["./node_modules/bun-types", "./node_modules/@types"],
+    "types": ["bun-types"]
   },
   "include": ["src/**/*", "test/**/*"],
   "exclude": ["dist", "node_modules", "competing_proposal_plans"]

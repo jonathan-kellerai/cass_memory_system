@@ -88,34 +88,72 @@ export type FeedbackEvent = z.infer<typeof FeedbackEventSchema>;
 // PLAYBOOK BULLET
 // ============================================================================
 
-export const PlaybookBulletSchema = z
-  .object({
-    id: z
-      .string()
-      .regex(/^b-[0-9a-z]+-[0-9a-z]{4,}$/i, "Invalid bullet id format"),
-    scope: BulletScopeEnum.default("global"),
-    scopeKey: z.string().optional(),
-    workspace: z.string().optional(),
-    /** High-level grouping for organization (e.g., 'testing', 'git', 'auth') */
-    category: z.string(),
-    /** The actual rule text shown to agents (10-500 characters) */
-    content: z.string().min(10, "Rule content must be at least 10 characters").max(500, "Rule content must not exceed 500 characters"),
-    /** Gemini-style search pattern for retrieving detailed examples from cass */
-    searchPointer: z.string().optional(),
-    /** Binary: prescriptive (rule) or proscriptive (anti-pattern) */
-    type: BulletTypeEnum.default("rule"),
-    /** Computed shorthand for type === 'anti-pattern'. Set automatically during validation. */
-    isNegative: z.boolean().default(false),
+/**
+ * Base schema for PlaybookBullet without refinements.
+ * Use this for .partial() and .extend() operations.
+ *
+ * ## Event-Level Feedback Tracking (Key Innovation)
+ *
+ * This schema implements event-level feedback tracking with timestamps,
+ * enabling confidence decay calculation. Instead of simple counters, each
+ * feedback event stores temporal information for time-weighted scoring.
+ *
+ * ### Decay Algorithm
+ * ```typescript
+ * // Each event's value decays exponentially over time:
+ * decayedValue = Math.pow(0.5, ageDays / halfLifeDays)
+ *
+ * // Effective score combines all events with harmful weighting:
+ * effectiveScore = sum(helpfulDecayed) - 4 * sum(harmfulDecayed)
+ * ```
+ *
+ * ### Example Scenarios
+ * - Recent activity (high confidence): Events from past week → score ≈ 3.0
+ * - Old activity (low confidence): Events from 6 months ago → score ≈ 0.15
+ * - Mixed feedback: 2 helpful + 1 harmful recent → score ≈ -2.0 (at risk)
+ */
+export const PlaybookBulletBaseSchema = z.object({
+  id: z.string(),
+  scope: BulletScopeEnum.default("global"),
+  scopeKey: z.string().optional(),
+  workspace: z.string().optional(),
+  /** High-level grouping for organization (e.g., 'testing', 'git', 'auth') */
+  category: z.string(),
+  /** The actual rule text shown to agents (10-500 characters) */
+  content: z.string(),
+  /** Gemini-style search pattern for retrieving detailed examples from cass */
+  searchPointer: z.string().optional(),
+  /** Binary: prescriptive (rule) or proscriptive (anti-pattern) */
+  type: BulletTypeEnum.default("rule"),
+  /** Computed shorthand for type === 'anti-pattern' */
+  isNegative: z.boolean().default(false),
   kind: BulletKindEnum.default("stack_pattern"),
   state: BulletStateEnum.default("draft"),
   maturity: BulletMaturityEnum.default("candidate"),
   promotedAt: z.string().optional(),
+  /** Legacy counter - derived from feedbackEvents.filter(e => e.type === 'helpful').length */
   helpfulCount: z.number().default(0),
+  /** Legacy counter - derived from feedbackEvents.filter(e => e.type === 'harmful').length */
   harmfulCount: z.number().default(0),
+  /**
+   * Single source of truth for feedback tracking (KEY INNOVATION).
+   * Each event contains: type ('helpful'|'harmful'), timestamp, sessionPath?, reason?, context?
+   * Used for confidence decay: score = sum(0.5^(ageDays/halfLife))
+   */
   feedbackEvents: z.array(FeedbackEventSchema).default([]),
+  /** @deprecated Use feedbackEvents - kept for schema compatibility */
   helpfulEvents: z.array(FeedbackEventSchema).default([]),
+  /** @deprecated Use feedbackEvents - kept for schema compatibility */
   harmfulEvents: z.array(FeedbackEventSchema).default([]),
+  /** When rule was last validated against cass history */
   lastValidatedAt: z.string().optional(),
+  /**
+   * Half-life in days for confidence decay.
+   * - 30 days: Fast-moving tech (e.g., beta APIs)
+   * - 90 days: Default for most rules
+   * - 180 days: Stable patterns
+   * - 365 days: Timeless principles
+   */
   confidenceDecayHalfLifeDays: z.number().default(90),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -130,60 +168,48 @@ export const PlaybookBulletSchema = z
   tags: z.array(z.string()).default([]),
   embedding: z.array(z.number()).optional(),
   effectiveScore: z.number().optional(),
-    deprecatedAt: z.string().optional()
-  })
-  .superRefine((bullet, ctx) => {
-    // Scope validation: workspace scope requires workspace to be set
-    if (bullet.scope === "workspace" && !bullet.workspace) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["workspace"],
-        message: "workspace scope requires workspace to be set",
-      });
-    }
-    // Scope validation: language/framework/task scopes require scopeKey
-    if (
-      (bullet.scope === "language" ||
-        bullet.scope === "framework" ||
-        bullet.scope === "task") &&
-      !bullet.scopeKey
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["scopeKey"],
-        message: `${bullet.scope} scope requires scopeKey`,
-      });
-    }
-    // Scope validation: global/workspace scopes should not have scopeKey
-    if (
-      (bullet.scope === "global" || bullet.scope === "workspace") &&
-      bullet.scopeKey
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["scopeKey"],
-        message: "scopeKey should be omitted for global/workspace scopes",
-      });
-    }
-    // Type/isNegative consistency: isNegative should match type === 'anti-pattern'
-    const expectedNegative = bullet.type === "anti-pattern";
-    if (bullet.isNegative !== expectedNegative) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["isNegative"],
-        message: `isNegative (${bullet.isNegative}) must match type '${bullet.type}' (expected ${expectedNegative})`,
-      });
-    }
-    // Kind/type consistency: anti_pattern kind should have anti-pattern type
-    if (bullet.kind === "anti_pattern" && bullet.type !== "anti-pattern") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["type"],
-        message: "kind 'anti_pattern' requires type 'anti-pattern'",
-      });
-    }
-  });
-export type PlaybookBullet = z.infer<typeof PlaybookBulletSchema>;
+  deprecatedAt: z.string().optional()
+});
+
+/**
+ * PlaybookBullet schema with validation refinements.
+ * Use PlaybookBulletBaseSchema for .partial() and .extend() operations.
+ */
+export const PlaybookBulletSchema = PlaybookBulletBaseSchema.superRefine((bullet, ctx) => {
+  // Scope validation: workspace scope requires workspace to be set
+  if (bullet.scope === "workspace" && !bullet.workspace) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["workspace"],
+      message: "workspace scope requires workspace to be set",
+    });
+  }
+  // Scope validation: language/framework/task scopes require scopeKey
+  if (
+    (bullet.scope === "language" ||
+      bullet.scope === "framework" ||
+      bullet.scope === "task") &&
+    !bullet.scopeKey
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["scopeKey"],
+      message: `${bullet.scope} scope requires scopeKey`,
+    });
+  }
+  // Scope validation: global/workspace scopes should not have scopeKey
+  if (
+    (bullet.scope === "global" || bullet.scope === "workspace") &&
+    bullet.scopeKey
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["scopeKey"],
+      message: "scopeKey should be omitted for global/workspace scopes",
+    });
+  }
+});
+export type PlaybookBullet = z.infer<typeof PlaybookBulletBaseSchema>;
 
 // ============================================================================
 // NEW BULLET DATA

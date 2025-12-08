@@ -288,6 +288,109 @@ export function extractAgentFromPath(sessionPath: string): string {
   return "unknown";
 }
 
+// --- Search Suggestions ---
+
+/**
+ * Problem-oriented terms to include in search suggestions.
+ * These help surface debugging and troubleshooting context.
+ */
+const PROBLEM_TERMS = ["error", "fix", "bug", "issue", "problem", "fail", "debug"];
+
+/**
+ * Generate human-readable cass search suggestions for follow-up investigation.
+ *
+ * Creates 3-5 ready-to-run cass commands that the user can execute to dig deeper
+ * if the provided context isn't sufficient.
+ *
+ * @param task - The original task description
+ * @param keywords - Extracted keywords from the task
+ * @param options - Optional configuration
+ * @param options.preferredAgent - Agent to filter by (e.g., "claude")
+ * @param options.maxSuggestions - Maximum number of suggestions (default: 5)
+ * @returns Array of formatted cass command strings
+ *
+ * @example
+ * generateSuggestedQueries("Fix authentication timeout bug", ["authentication", "timeout", "token"])
+ * // Returns:
+ * // [
+ * //   'cass search "authentication timeout" --days 30',
+ * //   'cass search "token error" --days 60',
+ * //   'cass search "authentication" --days 90',
+ * //   ...
+ * // ]
+ */
+export function generateSuggestedQueries(
+  task: string,
+  keywords: string[],
+  options: { preferredAgent?: string; maxSuggestions?: number } = {}
+): string[] {
+  const { preferredAgent, maxSuggestions = 5 } = options;
+  const queries: string[] = [];
+  const seenQueries = new Set<string>();
+
+  // Helper to add query if not duplicate
+  const addQuery = (query: string, days: number, agent?: string): void => {
+    if (queries.length >= maxSuggestions) return;
+
+    // Escape quotes in query
+    const escapedQuery = query.replace(/"/g, '\\"');
+    const key = `${escapedQuery}-${days}-${agent || ""}`;
+
+    if (!seenQueries.has(key)) {
+      seenQueries.add(key);
+      let cmd = `cass search "${escapedQuery}" --days ${days}`;
+      if (agent) cmd += ` --agent ${agent}`;
+      queries.push(cmd);
+    }
+  };
+
+  // 1. Multi-keyword phrase query (first 2-3 keywords combined)
+  if (keywords.length >= 2) {
+    const phrase = keywords.slice(0, 3).join(" ");
+    addQuery(phrase, 30);
+  }
+
+  // 2. Single keyword with problem term (find error/fix patterns)
+  if (keywords.length > 0) {
+    const topKeyword = keywords[0];
+
+    // Check if task already contains problem terms
+    const taskLower = task.toLowerCase();
+    const hasProblemTerm = PROBLEM_TERMS.some(term => taskLower.includes(term));
+
+    if (!hasProblemTerm) {
+      // Add error-oriented query if task doesn't have problem terms
+      addQuery(`${topKeyword} error`, 60);
+    } else {
+      // Task already has problem context, search for solutions
+      addQuery(`${topKeyword} fix`, 60);
+    }
+  }
+
+  // 3. Broad single keyword query with longer lookback
+  if (keywords.length > 0) {
+    addQuery(keywords[0], 90);
+  }
+
+  // 4. Second keyword with agent filter if available
+  if (keywords.length > 1 && preferredAgent) {
+    addQuery(keywords[1], 60, preferredAgent);
+  }
+
+  // 5. Keyword combination with medium lookback
+  if (keywords.length >= 2) {
+    const twoKeywords = keywords.slice(0, 2).join(" ");
+    addQuery(twoKeywords, 60);
+  }
+
+  // 6. Third keyword or pattern with longer lookback if space
+  if (keywords.length >= 3 && queries.length < maxSuggestions) {
+    addQuery(keywords[2], 90);
+  }
+
+  return queries;
+}
+
 // --- Logging ---
 
 export function log(msg: string, verbose = false): void {
