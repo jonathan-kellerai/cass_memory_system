@@ -3,6 +3,10 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import chalk from "chalk";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 
 // --- Path Utilities ---
 
@@ -32,50 +36,58 @@ export async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-/**
- * Extract agent name from a session path.
- * Parses paths like ~/.claude/sessions/abc.jsonl → "claude"
- *
- * @param sessionPath - Path to a session file
- * @returns Agent name (lowercase) or "unknown"
- */
-export function extractAgentFromPath(sessionPath: string): string {
-  if (!sessionPath) return "unknown";
-
-  // Normalize the path
-  const normalized = expandPath(sessionPath).toLowerCase();
-
-  // Known agent patterns in session paths
-  const agentPatterns = [
-    { pattern: /\.claude\b/, agent: "claude" },
-    { pattern: /\.cursor\b/, agent: "cursor" },
-    { pattern: /\.codex\b/, agent: "codex" },
-    { pattern: /\.aider\b/, agent: "aider" },
-    { pattern: /\.gemini\b/, agent: "gemini" },
-    { pattern: /\.chatgpt\b/, agent: "chatgpt" },
-    { pattern: /\.copilot\b/, agent: "copilot" },
-    { pattern: /\.windsurf\b/, agent: "windsurf" },
-  ];
-
-  for (const { pattern, agent } of agentPatterns) {
-    if (pattern.test(normalized)) {
-      return agent;
-    }
+export async function checkDiskSpace(dirPath: string): Promise<{ ok: boolean; free: string }> {
+  try {
+    const expanded = expandPath(dirPath);
+    await ensureDir(expanded);
+    const { stdout } = await execAsync(`df -h "${expanded}" | tail -1 | awk '{print $4}'`);
+    return { ok: true, free: stdout.trim() };
+  } catch {
+    return { ok: true, free: "unknown" }; 
   }
+}
 
-  // Try to extract from directory structure
-  // e.g., /home/user/.config/claude/sessions/... → claude
-  const parts = normalized.split(path.sep);
-  for (const part of parts) {
-    if (part.startsWith(".")) {
-      const cleaned = part.slice(1);
-      if (agentPatterns.some((p) => p.agent === cleaned)) {
-        return cleaned;
+// --- File Locking ---
+
+export async function withLock<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
+  const lockFile = `${expandPath(filePath)}.lock`;
+  const maxRetries = 10;
+  const retryDelay = 100; // ms
+
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      // "wx" flag fails if file exists
+      await fs.writeFile(lockFile, process.pid.toString(), { flag: "wx" });
+      
+      try {
+        return await operation();
+      } finally {
+        await fs.unlink(lockFile);
       }
+    } catch (err: any) {
+      if (err.code === "EEXIST") {
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        continue;
+      }
+      throw err;
     }
   }
+  throw new Error(`Could not acquire lock for ${filePath} after ${maxRetries} attempts.`);
+}
 
-  return "unknown";
+export async function atomicWrite(filePath: string, content: string): Promise<void> {
+  const expanded = expandPath(filePath);
+  await ensureDir(path.dirname(expanded));
+  
+  const tempPath = `${expanded}.tmp.${crypto.randomBytes(4).toString("hex")}`;
+  
+  try {
+    await fs.writeFile(tempPath, content, "utf-8");
+    await fs.rename(tempPath, expanded);
+  } catch (err: any) {
+    try { await fs.unlink(tempPath); } catch {} 
+    throw new Error(`Failed to atomic write to ${expanded}: ${err.message}`);
+  }
 }
 
 // --- Content & Hashing ---
@@ -93,11 +105,17 @@ export function hashContent(content: string): string {
 
 export function tokenize(text: string): string[] {
   if (!text) return [];
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .split(/\s+/)
-    .filter(t => t.length >= 3);
+  
+  // Improved regex: Keeps technical terms like C++, node.js, user_id
+  // Matches:
+  // - Sequences of alphanumeric chars including dots, underscores, hyphens, pluses
+  // - But avoids trailing dots
+  
+  // This is a heuristic for code-heavy text
+  const tokens = text.toLowerCase().match(/[a-z0-9]+(?:[._\-+]+[a-z0-9]+)*|[a-z0-9]+/g);
+  
+  return (tokens || [])
+    .filter(t => t.length >= 2); // Min length 2
 }
 
 export function jaccardSimilarity(a: string, b: string): number {
@@ -166,11 +184,9 @@ export function extractKeywords(text: string): string[] {
   const tokens = tokenize(text);
   const keywords = tokens.filter(t => !STOP_WORDS.has(t));
   
-  // Count frequency
   const counts: Record<string, number> = {};
   keywords.forEach(k => counts[k] = (counts[k] || 0) + 1);
   
-  // Sort by frequency and take top 10
   return Object.entries(counts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
@@ -180,7 +196,51 @@ export function extractKeywords(text: string): string[] {
 export function truncate(text: string, maxLen: number): string {
   if (!text) return "";
   if (text.length <= maxLen) return text;
+  if (maxLen < 3) return text.slice(0, maxLen);
   return text.slice(0, maxLen - 3) + "...";
+}
+
+// --- Deprecated pattern detection ---
+
+function buildDeprecatedMatcher(pattern: string): (text: string) => boolean {
+  if (!pattern) return () => false;
+
+  if (pattern.startsWith("/") && pattern.endsWith("/") && pattern.length > 2) {
+    const body = pattern.slice(1, -1);
+    const regex = new RegExp(body);
+    return (text: string) => regex.test(text);
+  }
+
+  return (text: string) => text.includes(pattern);
+}
+
+export function checkDeprecatedPatterns(
+  history: Array<{ snippet?: string }> = [],
+  deprecatedPatterns: Array<{ pattern: string; replacement?: string; reason?: string }> = []
+): string[] {
+  if (!history.length || !deprecatedPatterns.length) return [];
+
+  const warnings = new Set<string>();
+
+  for (const deprecated of deprecatedPatterns) {
+    if (!deprecated?.pattern) continue;
+
+    const matches = buildDeprecatedMatcher(deprecated.pattern);
+
+    for (const hit of history) {
+      const snippet = hit?.snippet;
+      if (!snippet) continue;
+
+      if (matches(snippet)) {
+        const reasonSuffix = deprecated.reason ? ` (Reason: ${deprecated.reason})` : "";
+        const replacement = deprecated.replacement ? ` - use ${deprecated.replacement} instead` : "";
+        warnings.add(`${deprecated.pattern} was deprecated${replacement}${reasonSuffix}`);
+        break;
+      }
+    }
+  }
+
+  return Array.from(warnings);
 }
 
 // --- Scoring ---
@@ -196,12 +256,36 @@ export function scoreBulletRelevance(
   const contentLower = bulletContent.toLowerCase();
   const tagsLower = bulletTags.map(t => t.toLowerCase());
   
+  // Tokenize once
+  const contentTokens = new Set(tokenize(contentLower));
+
   for (const keyword of keywords) {
-    if (contentLower.includes(keyword)) score += 2;
-    if (tagsLower.some(t => t.includes(keyword))) score += 3;
+    const k = keyword.toLowerCase();
+    
+    // Exact match in token set (fast)
+    if (contentTokens.has(k)) {
+        score += 3;
+    } 
+    // Partial string match (slower fallback for "auth" -> "authenticate")
+    else if (contentLower.includes(k)) {
+        score += 1;
+    }
+    
+    if (tagsLower.includes(k)) {
+        score += 5; // Higher weight for explicit tags
+    }
   }
   
   return score;
+}
+
+export function extractAgentFromPath(sessionPath: string): string {
+  const lower = sessionPath.toLowerCase();
+  if (lower.includes(".claude")) return "claude";
+  if (lower.includes(".cursor")) return "cursor";
+  if (lower.includes(".codex")) return "codex";
+  if (lower.includes(".aider")) return "aider";
+  return "unknown";
 }
 
 // --- Logging ---
