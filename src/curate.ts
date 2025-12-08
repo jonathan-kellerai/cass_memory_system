@@ -57,8 +57,9 @@ const POSITIVE_MARKERS = ["always", "must", "required", "ensure", "use", "enable
 const EXCEPTION_MARKERS = ["unless", "except", "only if", "only when", "except when"];
 
 function hasMarker(text: string, markers: string[]): boolean {
+  // Use word boundaries to avoid substring matches (e.g., "use" matching "user")
   const lower = text.toLowerCase();
-  return markers.some(m => lower.includes(m));
+  return markers.some(m => new RegExp(`\\b${m}\\b`, 'i').test(lower));
 }
 
 export function detectConflicts(
@@ -71,9 +72,8 @@ export function detectConflicts(
     if (b.deprecated) continue;
 
     const overlap = jaccardSimilarity(newContent, b.content);
-    const markerPresent = hasMarker(newContent, NEGATIVE_MARKERS) || hasMarker(b.content, NEGATIVE_MARKERS) ||
-      hasMarker(newContent, POSITIVE_MARKERS) || hasMarker(b.content, POSITIVE_MARKERS);
-    if (overlap < 0.25 && !markerPresent) continue;
+    // Optimization: Check overlap first before regex
+    if (overlap < 0.25) continue;
 
     const newNeg = hasMarker(newContent, NEGATIVE_MARKERS);
     const oldNeg = hasMarker(b.content, NEGATIVE_MARKERS);
@@ -349,20 +349,27 @@ export function curatePlaybook(
     const { decayedHarmful, decayedHelpful } = getDecayedCounts(bullet, config);
 
     if (decayedHarmful >= 3 && decayedHarmful > (decayedHelpful * 2)) {
-      const antiPattern = invertToAntiPattern(bullet, config);
-      targetPlaybook.bullets.push(antiPattern);
+      if (bullet.isNegative) {
+        // Negative rule found harmful -> likely incorrect. Just deprecate, don't invert.
+        deprecateBullet(targetPlaybook, bullet.id, "Negative rule marked harmful (likely incorrect restriction)");
+        result.pruned++; // Count as pruning since we just killed it
+      } else {
+        // Positive rule found harmful -> Invert to anti-pattern
+        const antiPattern = invertToAntiPattern(bullet, config);
+        targetPlaybook.bullets.push(antiPattern);
 
-      deprecateBullet(targetPlaybook, bullet.id, `Inverted to anti-pattern: ${antiPattern.id}`, antiPattern.id);
-      invertedBulletIds.add(bullet.id);
+        deprecateBullet(targetPlaybook, bullet.id, `Inverted to anti-pattern: ${antiPattern.id}`, antiPattern.id);
+        invertedBulletIds.add(bullet.id);
 
-      inversions.push({
-        originalId: bullet.id,
-        originalContent: bullet.content,
-        antiPatternId: antiPattern.id,
-        antiPatternContent: antiPattern.content,
-        bulletId: bullet.id,
-        reason: `Marked as blocked/anti-pattern`
-      });
+        inversions.push({
+          originalId: bullet.id,
+          originalContent: bullet.content,
+          antiPatternId: antiPattern.id,
+          antiPatternContent: antiPattern.content,
+          bulletId: bullet.id,
+          reason: `Marked as blocked/anti-pattern`
+        });
+      }
     }
   }
   result.inversions = inversions;
