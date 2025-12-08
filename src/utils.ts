@@ -356,6 +356,224 @@ function getExampleForType(type: InputType): string {
   }
 }
 
+// --- Permission Error Handling ---
+
+/**
+ * Error thrown when a file permission issue is detected.
+ * Contains actionable guidance for resolution.
+ */
+export class PermissionError extends Error {
+  /** The path that had the permission issue */
+  readonly path: string;
+  /** The operation that failed (read, write, execute) */
+  readonly operation: "read" | "write" | "execute" | "delete" | "unknown";
+  /** Current permissions in octal (e.g., "644") */
+  readonly currentPermissions?: string;
+  /** Suggested fix command */
+  readonly suggestedFix: string;
+  /** Original error code (EACCES, EPERM, etc.) */
+  readonly errorCode: string;
+
+  constructor(
+    path: string,
+    operation: "read" | "write" | "execute" | "delete" | "unknown",
+    currentPermissions: string | undefined,
+    suggestedFix: string,
+    errorCode: string,
+    originalMessage: string
+  ) {
+    const permStr = currentPermissions ? ` (current: ${currentPermissions})` : "";
+    const message = [
+      `Permission denied: Cannot ${operation} ${path}${permStr}`,
+      ``,
+      `Error: ${originalMessage}`,
+      ``,
+      `To fix:`,
+      `  ${suggestedFix}`,
+    ].join("\n");
+
+    super(message);
+    this.name = "PermissionError";
+    this.path = path;
+    this.operation = operation;
+    this.currentPermissions = currentPermissions;
+    this.suggestedFix = suggestedFix;
+    this.errorCode = errorCode;
+  }
+}
+
+/**
+ * Check if an error is a permission-related error.
+ */
+export function isPermissionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EACCES" || code === "EPERM";
+}
+
+/**
+ * Detect the operation type from the error message.
+ */
+function detectOperation(
+  error: Error
+): "read" | "write" | "execute" | "delete" | "unknown" {
+  const msg = error.message.toLowerCase();
+  if (msg.includes("open") && msg.includes("r")) return "read";
+  if (
+    msg.includes("write") ||
+    msg.includes("open") ||
+    msg.includes("mkdir") ||
+    msg.includes("rename")
+  )
+    return "write";
+  if (msg.includes("unlink") || msg.includes("rmdir")) return "delete";
+  if (msg.includes("exec") || msg.includes("spawn")) return "execute";
+  return "unknown";
+}
+
+/**
+ * Format file mode as human-readable string.
+ * @param mode - File mode from fs.stat
+ * @returns String like "644" (rw-r--r--) or "755" (rwxr-xr-x)
+ */
+function formatMode(mode: number): string {
+  // Extract permission bits (last 9 bits)
+  const permBits = mode & 0o777;
+  return permBits.toString(8).padStart(3, "0");
+}
+
+/**
+ * Get current file/directory permissions if accessible.
+ */
+async function getPermissions(
+  filePath: string
+): Promise<{ mode: string; owner: string } | null> {
+  try {
+    const stat = await fs.stat(filePath);
+    return {
+      mode: formatMode(stat.mode),
+      owner: `uid:${stat.uid}`,
+    };
+  } catch {
+    // Try parent directory if file doesn't exist
+    try {
+      const parentDir = path.dirname(filePath);
+      const stat = await fs.stat(parentDir);
+      return {
+        mode: formatMode(stat.mode) + " (parent dir)",
+        owner: `uid:${stat.uid}`,
+      };
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Generate a suggested fix command based on the operation and path.
+ */
+function generateSuggestedFix(
+  operation: "read" | "write" | "execute" | "delete" | "unknown",
+  filePath: string,
+  isDirectory: boolean
+): string {
+  const escapedPath = filePath.replace(/'/g, "'\\''");
+
+  switch (operation) {
+    case "read":
+      return isDirectory
+        ? `chmod 755 '${escapedPath}' # Allow directory access`
+        : `chmod 644 '${escapedPath}' # Allow file read`;
+    case "write":
+    case "delete":
+      return isDirectory
+        ? `chmod 755 '${escapedPath}' # Allow directory write`
+        : `chmod 644 '${escapedPath}' # Allow file write`;
+    case "execute":
+      return `chmod +x '${escapedPath}' # Allow execution`;
+    default:
+      return `chmod 644 '${escapedPath}' # Try granting read/write`;
+  }
+}
+
+/**
+ * Handle file permission errors with helpful guidance.
+ *
+ * Detects EACCES and EPERM errors, retrieves current permissions,
+ * and throws an enhanced PermissionError with actionable fix suggestions.
+ *
+ * @param error - The original error that occurred
+ * @param filePath - The path that was being accessed
+ * @throws {PermissionError} Always throws with helpful information
+ *
+ * @example
+ * try {
+ *   await fs.readFile('/root/secret.txt');
+ * } catch (error) {
+ *   if (isPermissionError(error)) {
+ *     await handlePermissionError(error as Error, '/root/secret.txt');
+ *   }
+ *   throw error;
+ * }
+ */
+export async function handlePermissionError(
+  error: Error,
+  filePath: string
+): Promise<never> {
+  const code = (error as NodeJS.ErrnoException).code || "UNKNOWN";
+  const operation = detectOperation(error);
+
+  // Get current permissions
+  const perms = await getPermissions(filePath);
+  const permStr = perms ? `${perms.mode} (owner: ${perms.owner})` : undefined;
+
+  // Check if it's a directory
+  let isDirectory = false;
+  try {
+    const stat = await fs.stat(filePath);
+    isDirectory = stat.isDirectory();
+  } catch {
+    // Assume file if we can't stat
+    isDirectory = filePath.endsWith("/") || !path.extname(filePath);
+  }
+
+  const suggestedFix = generateSuggestedFix(operation, filePath, isDirectory);
+
+  throw new PermissionError(
+    filePath,
+    operation,
+    permStr,
+    suggestedFix,
+    code,
+    error.message
+  );
+}
+
+/**
+ * Synchronous version of handlePermissionError for use in sync contexts.
+ * Uses cached/estimated permissions rather than async stat.
+ */
+export function handlePermissionErrorSync(
+  error: Error,
+  filePath: string
+): never {
+  const code = (error as NodeJS.ErrnoException).code || "UNKNOWN";
+  const operation = detectOperation(error);
+
+  // Check if it's likely a directory
+  const isDirectory = filePath.endsWith("/") || !path.extname(filePath);
+  const suggestedFix = generateSuggestedFix(operation, filePath, isDirectory);
+
+  throw new PermissionError(
+    filePath,
+    operation,
+    undefined, // Can't get permissions synchronously without blocking
+    suggestedFix,
+    code,
+    error.message
+  );
+}
+
 // --- Path Utilities ---
 
 export function expandPath(p: string): string {

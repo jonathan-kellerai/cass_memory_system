@@ -71,7 +71,7 @@ describe("validateAndSanitizeInput", () => {
     test("throws error with helpful message for invalid bullet ID", () => {
       try {
         validateAndSanitizeInput("bulletId", "invalid-id");
-        expect.fail("Should have thrown");
+        throw new Error("Should have thrown");
       } catch (e) {
         expect(e).toBeInstanceOf(InputValidationError);
         const err = e as InputValidationError;
@@ -171,7 +171,7 @@ describe("validateAndSanitizeInput", () => {
     test("throws error with helpful message for invalid path", () => {
       try {
         validateAndSanitizeInput("sessionPath", "");
-        expect.fail("Should have thrown");
+        throw new Error("Should have thrown");
       } catch (e) {
         expect(e).toBeInstanceOf(InputValidationError);
         const err = e as InputValidationError;
@@ -247,7 +247,7 @@ describe("validateAndSanitizeInput", () => {
     test("throws error with helpful message for invalid task", () => {
       try {
         validateAndSanitizeInput("task", "");
-        expect.fail("Should have thrown");
+        throw new Error("Should have thrown");
       } catch (e) {
         expect(e).toBeInstanceOf(InputValidationError);
         const err = e as InputValidationError;
@@ -332,7 +332,7 @@ describe("validateAndSanitizeInput", () => {
     test("throws error with helpful message for invalid category", () => {
       try {
         validateAndSanitizeInput("category", "@invalid");
-        expect.fail("Should have thrown");
+        throw new Error("Should have thrown");
       } catch (e) {
         expect(e).toBeInstanceOf(InputValidationError);
         const err = e as InputValidationError;
@@ -359,7 +359,7 @@ describe("validateAndSanitizeInput", () => {
     test("error message indicates null/undefined", () => {
       try {
         validateAndSanitizeInput("category", null as unknown as string);
-        expect.fail("Should have thrown");
+        throw new Error("Should have thrown");
       } catch (e) {
         expect(e).toBeInstanceOf(InputValidationError);
         const err = e as InputValidationError;

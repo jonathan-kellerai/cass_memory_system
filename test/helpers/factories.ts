@@ -8,6 +8,15 @@ import {
 } from "../../src/types.js";
 import { generateBulletId, generateDiaryId, now } from "../../src/utils.js";
 
+/**
+ * Helper to create an ISO timestamp for N days ago.
+ */
+export function daysAgo(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString();
+}
+
 export function createTestConfig(overrides: Partial<Config> = {}): Config {
   const defaults: Config = {
     schema_version: 1,
@@ -133,40 +142,41 @@ export function createTestPlaybook(bullets: PlaybookBullet[] = []): Playbook {
   };
 }
 
-export function createTestFeedbackEvent(type: "helpful" | "harmful", daysAgo = 0): FeedbackEvent {
-  const date = new Date();
-  date.setDate(date.getDate() - daysAgo);
+export function createTestFeedbackEvent(
+  type: "helpful" | "harmful",
+  overrides: Partial<Omit<FeedbackEvent, "type">> | number = {}
+): FeedbackEvent {
+  // Handle legacy daysAgo signature if number passed
+  if (typeof overrides === "number") {
+    const date = new Date();
+    date.setDate(date.getDate() - overrides);
+    return {
+      type,
+      timestamp: date.toISOString(),
+      sessionPath: "/tmp/session.jsonl"
+    };
+  }
 
+  const now = new Date().toISOString();
   return {
     type,
-    timestamp: date.toISOString(),
-    sessionPath: "/tmp/session.jsonl"
+    timestamp: overrides.timestamp ?? now,
+    sessionPath: overrides.sessionPath ?? "/tmp/session.jsonl",
+    context: overrides.context,
+    reason: overrides.reason,
+    decayedValue: overrides.decayedValue,
+    ...overrides
   };
 }
 
-/**
- * Create a feedback event with optional overrides.
- * More flexible than createTestFeedbackEvent - allows partial overrides.
- */
 export function createFeedbackEvent(
   type: "helpful" | "harmful",
-  overrides: Partial<Omit<FeedbackEvent, "type">> = {}
+  overrides: Partial<FeedbackEvent> = {}
 ): FeedbackEvent {
   return {
     type,
-    timestamp: overrides.timestamp || now(),
-    sessionPath: overrides.sessionPath || "/tmp/session.jsonl",
-    ...(overrides.reason ? { reason: overrides.reason } : {}),
-    ...(overrides.context ? { context: overrides.context } : {})
+    timestamp: overrides.timestamp ?? now(),
+    sessionPath: overrides.sessionPath ?? "/tmp/session.jsonl",
+    ...overrides
   };
-}
-
-export function daysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString();
-}
-
-export function daysAgoString(days: number): string {
-  return daysAgo(days);
 }
