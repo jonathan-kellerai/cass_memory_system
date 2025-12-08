@@ -50,11 +50,22 @@ export function getDecayedCounts(
   let decayedHelpful = 0;
   let decayedHarmful = 0;
 
-  for (const event of bullet.feedbackEvents) {
+  const allHelpful = [
+    ...(bullet.helpfulEvents || []),
+    ...(bullet.feedbackEvents || []).filter((e) => e.type === "helpful"),
+  ];
+  const allHarmful = [
+    ...(bullet.harmfulEvents || []),
+    ...(bullet.feedbackEvents || []).filter((e) => e.type === "harmful"),
+  ];
+
+  for (const event of allHelpful) {
     const val = calculateDecayedValue(event, now, halfLifeDays);
-    if (!Number.isFinite(val)) continue;
-    if (event.type === "helpful") decayedHelpful += val;
-    else decayedHarmful += val;
+    if (Number.isFinite(val)) decayedHelpful += val;
+  }
+  for (const event of allHarmful) {
+    const val = calculateDecayedValue(event, now, halfLifeDays);
+    if (Number.isFinite(val)) decayedHarmful += val;
   }
 
   return { decayedHelpful, decayedHarmful };
@@ -148,7 +159,12 @@ export function isStale(
   bullet: PlaybookBullet,
   staleDays = 90
 ): boolean {
-  const events = bullet.feedbackEvents;
+  const events = [
+    ...(bullet.helpfulEvents || []),
+    ...(bullet.harmfulEvents || []),
+    ...(bullet.feedbackEvents || []),
+  ];
+
   if (events.length === 0) {
     return (
       Date.now() - new Date(bullet.createdAt).getTime() >

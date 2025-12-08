@@ -337,7 +337,8 @@ export type CassSearchOptions = z.infer<typeof CassSearchOptionsSchema>;
 export const ScoredBulletSchema = PlaybookBulletSchema.extend({
   relevanceScore: z.number(),
   effectiveScore: z.number(),
-  lastHelpful: z.string().optional()
+  lastHelpful: z.string().optional(),
+  finalScore: z.number().optional()
 });
 export type ScoredBullet = z.infer<typeof ScoredBulletSchema>;
 

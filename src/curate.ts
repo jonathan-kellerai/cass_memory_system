@@ -151,7 +151,8 @@ export function curatePlaybook(
             kind: "stack_pattern",
             scope: "global"
           },
-          delta.sourceSession
+          delta.sourceSession,
+          config
         );
         
         existingHashes.add(hash);
@@ -166,8 +167,7 @@ export function curatePlaybook(
           bullet.helpfulEvents.push({
             type: "helpful",
             timestamp: now(),
-            sessionPath: delta.sourceSession,
-            context: (delta as any).context
+            sessionPath: delta.sourceSession
           });
           bullet.helpfulCount++;
           bullet.lastValidatedAt = now();
