@@ -127,6 +127,99 @@ export function buildContextResult(
 
 export { formatLastHelpful, extractBulletReasoning };
 
+export interface ContextFlags {
+  json?: boolean;
+  top?: number;
+  history?: number;
+  days?: number;
+  workspace?: string;
+}
+
+export interface ContextComputation {
+  result: ContextResult;
+  rules: ScoredBullet[];
+  antiPatterns: ScoredBullet[];
+  cassHits: CassSearchHit[];
+  warnings: string[];
+  suggestedQueries: string[];
+}
+
+/**
+ * Programmatic context builder (no console output).
+ */
+export async function generateContextResult(
+  task: string,
+  flags: ContextFlags
+): Promise<ContextComputation> {
+  const config = await loadConfig();
+  const playbook = await loadMergedPlaybook(config);
+
+  const keywords = extractKeywords(task);
+
+  const activeBullets = getActiveBullets(playbook).filter((b) => {
+    if (!flags.workspace) return true;
+    if (b.scope !== "workspace") return true;
+    return b.workspace === flags.workspace;
+  });
+
+  const scoredBullets: ScoredBullet[] = activeBullets.map(b => {
+    const relevance = scoreBulletRelevance(b.content, b.tags, keywords);
+    const effective = getEffectiveScore(b, config);
+    const final = relevance * Math.max(0.1, effective);
+
+    return {
+      ...b,
+      relevanceScore: relevance,
+      effectiveScore: effective,
+      finalScore: final
+    };
+  });
+
+  scoredBullets.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0));
+
+  const topBullets = scoredBullets
+    .filter(b => (b.finalScore || 0) > 0)
+    .slice(0, flags.top || config.maxBulletsInContext);
+
+  const rules = topBullets.filter(b => !b.isNegative && b.kind !== "anti_pattern");
+  const antiPatterns = topBullets.filter(b => b.isNegative || b.kind === "anti_pattern");
+
+  const cassQuery = keywords.join(" ");
+  const cassHits = await safeCassSearch(cassQuery, {
+    limit: flags.history || config.maxHistoryInContext,
+    days: flags.days || config.sessionLookbackDays,
+    workspace: flags.workspace
+  }, config.cassPath);
+
+  const warnings: string[] = [];
+  const historyWarnings = checkDeprecatedPatterns(cassHits, playbook.deprecatedPatterns);
+  warnings.push(...historyWarnings);
+
+  for (const pattern of playbook.deprecatedPatterns) {
+    if (new RegExp(pattern.pattern, "i").test(task)) {
+      const reason = pattern.reason ? ` (Reason: ${pattern.reason})` : "";
+      const replacement = pattern.replacement ? ` - use ${pattern.replacement} instead` : "";
+      warnings.push(`Task matches deprecated pattern "${pattern.pattern}"${replacement}${reason}`);
+    }
+  }
+
+  const suggestedQueries = generateSuggestedQueries(task, keywords, {
+    maxSuggestions: 5
+  });
+
+  const result = buildContextResult(
+    task,
+    rules,
+    antiPatterns,
+    cassHits,
+    warnings,
+    suggestedQueries,
+    config
+  );
+
+  return { result, rules, antiPatterns, cassHits, warnings, suggestedQueries };
+}
+
 /**
  * Graceful degradation when cass is unavailable - provide playbook-only context.
  *
@@ -225,31 +318,32 @@ export async function contextWithoutCass(
   }
 }
 
-export async function contextCommand(
+export async function getContext(
   task: string, 
-  flags: { json?: boolean; top?: number; history?: number; days?: number; workspace?: string }
-) {
+  flags: { json?: boolean; top?: number; history?: number; days?: number; workspace?: string } = {}
+): Promise<{
+  result: ContextResult;
+  rules: ScoredBullet[];
+  antiPatterns: ScoredBullet[];
+  cassHits: CassSearchHit[];
+  warnings: string[];
+  suggestedQueries: string[];
+}> {
   const config = await loadConfig();
-  // Fix: Use loadMergedPlaybook(config) instead of loadPlaybook(config)
-  // Or if we want specific path, loadPlaybook(config.playbookPath).
-  // Context should use merged playbook (global + repo).
   const playbook = await loadMergedPlaybook(config);
   
-  // 1. Keywords & Scoring
   const keywords = extractKeywords(task);
-  
   const activeBullets = getActiveBullets(playbook).filter((b) => {
     if (!flags.workspace) return true;
-    // keep globals and non-workspace-scoped bullets; filter workspace-scoped to match
     if (b.scope !== "workspace") return true;
     return b.workspace === flags.workspace;
   });
-  
+
   const scoredBullets: ScoredBullet[] = activeBullets.map(b => {
     const relevance = scoreBulletRelevance(b.content, b.tags, keywords);
     const effective = getEffectiveScore(b, config);
     const final = relevance * Math.max(0.1, effective);
-    
+
     return {
       ...b,
       relevanceScore: relevance,
@@ -258,19 +352,15 @@ export async function contextCommand(
     };
   });
 
-  // Sort
   scoredBullets.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0));
-  
-  // Filter top N
+
   const topBullets = scoredBullets
     .filter(b => (b.finalScore || 0) > 0)
     .slice(0, flags.top || config.maxBulletsInContext);
 
-  // Separate Anti-Patterns
   const rules = topBullets.filter(b => !b.isNegative && b.kind !== "anti_pattern");
   const antiPatterns = topBullets.filter(b => b.isNegative || b.kind === "anti_pattern");
 
-  // 2. History Search
   const cassQuery = keywords.join(" ");
   const cassHits = await safeCassSearch(cassQuery, {
     limit: flags.history || config.maxHistoryInContext,
@@ -278,7 +368,6 @@ export async function contextCommand(
     workspace: flags.workspace
   }, config.cassPath);
 
-  // 3. Warnings (deprecated patterns seen in history or task text)
   const warnings: string[] = [];
   const historyWarnings = checkDeprecatedPatterns(cassHits, playbook.deprecatedPatterns);
   warnings.push(...historyWarnings);
@@ -291,13 +380,10 @@ export async function contextCommand(
     }
   }
 
-  // 4. Suggested Queries
   const suggestedQueries = generateSuggestedQueries(task, keywords, {
     maxSuggestions: 5
   });
 
-  // 5. Build Context Result using dedicated function
-  // This adds transformations like lastHelpful formatting and reasoning extraction
   const result = buildContextResult(
     task,
     rules,
@@ -307,6 +393,15 @@ export async function contextCommand(
     suggestedQueries,
     config
   );
+
+  return { result, rules, antiPatterns, cassHits, warnings, suggestedQueries };
+}
+
+export async function contextCommand(
+  task: string, 
+  flags: ContextFlags
+) {
+  const { result, rules, antiPatterns, cassHits, warnings, suggestedQueries } = await generateContextResult(task, flags);
 
   if (flags.json) {
     console.log(JSON.stringify(result, null, 2));
