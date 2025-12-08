@@ -39,6 +39,7 @@ program.command("context")
   .option("--top <n>", "Number of rules to show", toInt)
   .option("--history <n>", "Number of history snippets", toInt)
   .option("--days <n>", "Lookback days for history", toInt)
+  .option("--format <markdown|json>", "Force output format (overrides --json)")
   .action(async (task: string, opts: any) => await contextCommand(task, opts));
 
 // --- Mark ---

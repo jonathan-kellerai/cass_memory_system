@@ -7,6 +7,8 @@ import {
   CassTimelineResult
 } from "./types.js";
 import { log, error } from "./utils.js";
+import { sanitize } from "./security.js";
+import { loadConfig, getSanitizeConfig } from "./config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -122,7 +124,16 @@ export async function safeCassSearch(
   }
 
   try {
-    return await cassSearch(query, options, cassPath);
+    const hits = await cassSearch(query, options, cassPath);
+    
+    // Sanitize hits
+    const config = await loadConfig();
+    const sanitizeConfig = getSanitizeConfig(config);
+    
+    return hits.map(hit => ({
+      ...hit,
+      snippet: sanitize(hit.snippet, sanitizeConfig)
+    }));
   } catch (err: any) {
     const exitCode = err.code;
     
@@ -130,7 +141,16 @@ export async function safeCassSearch(
       log("Index missing, rebuilding...", true);
       try {
         await cassIndex(cassPath);
-        return await cassSearch(query, options, cassPath);
+        const hits = await cassSearch(query, options, cassPath);
+        
+        // Sanitize hits after retry
+        const config = await loadConfig();
+        const sanitizeConfig = getSanitizeConfig(config);
+        
+        return hits.map(hit => ({
+          ...hit,
+          snippet: sanitize(hit.snippet, sanitizeConfig)
+        }));
       } catch (retryErr) {
         error(`Recovery failed: ${retryErr}`);
         return [];
@@ -141,7 +161,16 @@ export async function safeCassSearch(
       log("Search timed out, retrying with reduced limit...", true);
       const reducedOptions = { ...options, limit: Math.max(1, Math.floor((options.limit || 10) / 2)) };
       try {
-        return await cassSearch(query, reducedOptions, cassPath);
+        const hits = await cassSearch(query, reducedOptions, cassPath);
+        
+        // Sanitize hits after retry
+        const config = await loadConfig();
+        const sanitizeConfig = getSanitizeConfig(config);
+        
+        return hits.map(hit => ({
+          ...hit,
+          snippet: sanitize(hit.snippet, sanitizeConfig)
+        }));
       } catch {
         return [];
       }
@@ -163,7 +192,11 @@ export async function cassExport(
   
   try {
     const { stdout } = await execFileAsync(cassPath, args, { maxBuffer: 50 * 1024 * 1024 });
-    return stdout;
+    
+    // Sanitize export output
+    const config = await loadConfig();
+    const sanitizeConfig = getSanitizeConfig(config);
+    return sanitize(stdout, sanitizeConfig);
   } catch (err: any) {
     if (err.code === CASS_EXIT_CODES.NOT_FOUND) return null;
     error(`Export failed: ${err.message}`);
@@ -183,7 +216,11 @@ export async function cassExpand(
   
   try {
     const { stdout } = await execFileAsync(cassPath, args);
-    return stdout;
+    
+    // Sanitize expanded output
+    const config = await loadConfig();
+    const sanitizeConfig = getSanitizeConfig(config);
+    return sanitize(stdout, sanitizeConfig);
   } catch (err: any) {
     return null;
   }

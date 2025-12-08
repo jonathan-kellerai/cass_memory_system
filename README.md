@@ -926,6 +926,19 @@ Test fixtures live under `test/fixtures/` (sample playbooks/config/diary), and r
 
 ---
 
+### Release Process (manual for now)
+
+Use semantic versioning (x.y.z). Until automation lands, follow this checklist:
+1. Update `package.json` version and add release notes to `CHANGELOG.md` under a dated section.
+2. Run full checks: `bun run typecheck` and `bun test`.
+3. Build binaries: `bun run build:all` (dist targets: darwin-arm64, darwin-x64, linux-x64, windows-x64.exe).
+4. Smoke each binary: `./dist/cass-memory-* --version` and `--help` on their respective platforms.
+5. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+6. Create GitHub release from the tag; upload the four binaries as assets and paste install commands (see Installation section).
+7. (Optional) Announce release; future work: Homebrew/CI automation.
+
+---
+
 ### Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for release history and pending (Unreleased) changes.

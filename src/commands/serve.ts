@@ -150,7 +150,7 @@ async function routeRequest(body: JsonRpcRequest): Promise<JsonRpcResponse> {
 }
 
 export async function serveCommand(options: { port?: number; host?: string } = {}): Promise<void> {
-  const port = options.port || Number(process.env.MCP_HTTP_PORT) || 3001;
+  const port = options.port || Number(process.env.MCP_HTTP_PORT) || 8765;
   const host = options.host || process.env.MCP_HTTP_HOST || "127.0.0.1";
 
   const server = http.createServer(async (req, res) => {
