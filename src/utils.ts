@@ -841,10 +841,6 @@ export function normalizePlatformPath(p: string): string {
   if (!p) return "";
 
   let input = expandPath(p);
-  // Debug logging
-  if (p.includes(":") || p.includes("server")) {
-      // console.log(`[DEBUG] normalizePlatformPath input: ${p}, expanded: ${input}`);
-  }
 
   const isUNC = input.startsWith("\\\\") || input.startsWith("//");
   const hasDriveLetter = /^[a-zA-Z]:/.test(input);
