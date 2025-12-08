@@ -6,18 +6,21 @@ import { HarmfulReason, HarmfulReasonEnum, FeedbackEvent } from "../types.js";
 import { withLock } from "../lock.js";
 import chalk from "chalk";
 
-export async function markCommand(
+type MarkFlags = { helpful?: boolean; harmful?: boolean; reason?: string; session?: string; json?: boolean };
+
+/**
+ * API-friendly feedback recorder (no console output, throws on error).
+ */
+export async function recordFeedback(
   bulletId: string,
-  flags: { helpful?: boolean; harmful?: boolean; reason?: string; session?: string; json?: boolean }
-) {
+  flags: MarkFlags
+): Promise<{ type: "helpful" | "harmful"; score: number; state: string }> {
   if (!flags.helpful && !flags.harmful) {
-    logError("Must specify --helpful or --harmful");
-    process.exit(1);
+    throw new Error("Must specify --helpful or --harmful");
   }
 
   const config = await loadConfig();
-  
-  // Determine source file location
+
   const globalPath = expandPath(config.playbookPath);
   const repoPath = expandPath(".cass/playbook.yaml");
 
@@ -31,16 +34,18 @@ export async function markCommand(
     // Ignore if repo playbook doesn't exist, stick to global
   }
 
+  let score = 0;
+  let state = "";
+  const type: "helpful" | "harmful" = flags.helpful ? "helpful" : "harmful";
+
   await withLock(saveTarget, async () => {
     const targetPlaybook = await loadPlaybook(saveTarget);
     const targetBullet = findBullet(targetPlaybook, bulletId);
 
     if (!targetBullet) {
-      logError(`Bullet ${bulletId} not found in ${saveTarget} during write lock.`);
-      process.exit(1);
+      throw new Error(`Bullet ${bulletId} not found in ${saveTarget} during write lock.`);
     }
 
-    const type: "helpful" | "harmful" = flags.helpful ? "helpful" : "harmful";
     let reason: HarmfulReason | undefined = undefined;
     
     if (type === "harmful") {
@@ -74,21 +79,35 @@ export async function markCommand(
 
     await savePlaybook(targetPlaybook, saveTarget);
     
-    // For output
-    const score = getEffectiveScore(targetBullet, config);
-    
+    score = getEffectiveScore(targetBullet, config);
+    state = targetBullet.maturity;
+  });
+
+  return { type, score, state };
+}
+
+export async function markCommand(
+  bulletId: string,
+  flags: MarkFlags
+): Promise<void> {
+  try {
+    const result = await recordFeedback(bulletId, flags);
+
     if (flags.json) {
       console.log(JSON.stringify({
         success: true,
         bulletId,
-        type,
-        newState: targetBullet.maturity,
-        effectiveScore: score
+        type: result.type,
+        newState: result.state,
+        effectiveScore: result.score
       }, null, 2));
     } else {
-      console.log(chalk.green(`✓ Marked bullet ${bulletId} as ${type}`));
-      console.log(`  New State: ${targetBullet.maturity}`);
-      console.log(`  Effective Score: ${score.toFixed(2)}`);
+      console.log(chalk.green(`✓ Marked bullet ${bulletId} as ${result.type}`));
+      console.log(`  New State: ${result.state}`);
+      console.log(`  Effective Score: ${result.score.toFixed(2)}`);
     }
-  });
+  } catch (err: any) {
+    logError(err?.message || String(err));
+    process.exit(1);
+  }
 }
