@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { ProcessedEntry } from "./types.js";
-import { ensureDir, fileExists, expandPath, now } from "./utils.js";
+import { ensureDir, fileExists, expandPath, now, atomicWrite, getCliName } from "./utils.js";
 import { sanitize } from "./sanitize.js";
 
 // -----------------------------------------------------------------------------
@@ -179,7 +179,7 @@ export async function trackEvent<T extends UsageEventType>(
     await fs.appendFile(logPath, JSON.stringify(entry) + "\n", "utf-8");
   } catch (error) {
     // Fire-and-forget: log error but don't propagate
-    console.error(`[cass-memory] Failed to track event: ${error}`);
+    console.error(`[${getCliName()}] Failed to track event: ${error}`);
   }
 }
 
@@ -455,21 +455,28 @@ export class ProcessedLog {
   }
 
   async save(): Promise<void> {
-    await ensureDir(path.dirname(this.logPath));
-    
     const lines = ["# JSONL format: {\"sessionPath\":..., \"processedAt\":...}"];
     
     for (const entry of this.entries.values()) {
       lines.push(JSON.stringify(entry));
     }
     
-    const tempPath = `${this.logPath}.tmp`;
-    try {
-        await fs.writeFile(tempPath, lines.join("\n"), "utf-8");
-        await fs.rename(tempPath, this.logPath);
-    } catch (error) {
-        try { await fs.unlink(tempPath); } catch {}
-        throw error;
+    await atomicWrite(this.logPath, lines.join("\n"));
+  }
+
+  async append(entry: ProcessedEntry): Promise<void> {
+    this.entries.set(entry.sessionPath, entry);
+    
+    const line = JSON.stringify(entry);
+    await ensureDir(path.dirname(this.logPath));
+    
+    // Check if file exists to add header if needed
+    const exists = await fileExists(this.logPath);
+    if (!exists) {
+      const header = "# JSONL format: {\"sessionPath\":..., \"processedAt\":...}\n";
+      await fs.writeFile(this.logPath, header + line + "\n", "utf-8");
+    } else {
+      await fs.appendFile(this.logPath, line + "\n", "utf-8");
     }
   }
 
