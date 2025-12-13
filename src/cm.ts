@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import { getCliName } from "./utils.js";
 import { initCommand } from "./commands/init.js";
 import { contextCommand } from "./commands/context.js";
 import { markCommand } from "./commands/mark.js";
@@ -20,12 +21,15 @@ import { topCommand } from "./commands/top.js";
 import { staleCommand } from "./commands/stale.js";
 import { whyCommand } from "./commands/why.js";
 import { undoCommand } from "./commands/undo.js";
+import { privacyCommand } from "./commands/privacy.js";
+import { similarCommand } from "./commands/similar.js";
 
 const program = new Command();
 const toInt = (value: string) => parseInt(value, 10);
+const toFloat = (value: string) => parseFloat(value);
 
 program
-  .name("cass-memory")
+  .name(getCliName())
   .description("Agent-agnostic reflection and memory system")
   .version("0.1.0");
 
@@ -35,6 +39,7 @@ program.command("init")
   .option("-f, --force", "Overwrite existing config")
   .option("--repo", "Initialize repo-level .cass/ directory structure")
   .option("--json", "Output JSON")
+  .option("--no-interactive", "Disable interactive prompts")
   .option("--starter <name>", "Seed the playbook with a starter rule set")
   .action(async (opts: any) => await initCommand(opts));
 
@@ -51,6 +56,16 @@ program.command("context")
   .option("--log-context", "Log context usage for implicit feedback")
   .option("--session <id>", "Optional session id to log with context")
   .action(async (task: string, opts: any) => await contextCommand(task, opts));
+
+// --- Similar ---
+program.command("similar")
+  .description("Find similar bullets in the playbook for a query")
+  .argument("<query>", "Query text to match against playbook bullets")
+  .option("--limit <n>", "Number of results (default: 5)", toInt)
+  .option("--threshold <t>", "Minimum similarity score 0-1 (default: 0.7)", toFloat)
+  .option("--scope <scope>", "Filter by scope: global, workspace, all", "all")
+  .option("--json", "Output JSON")
+  .action(async (query: string, opts: any) => await similarCommand(query, opts));
 
 // --- Mark ---
 program.command("mark")
@@ -84,6 +99,7 @@ playbook.command("remove")
   .description("Remove (deprecate) a rule")
   .argument("<id>", "Rule ID")
   .option("--hard", "Permanently delete")
+  .option("--yes", "Confirm irreversible deletion (required for --hard in non-interactive mode)")
   .option("--reason <text>", "Reason for removal")
   .option("--json", "Output JSON")
   .action(async (id: string, opts: any) => await playbookCommand("remove", [id], opts));
@@ -145,6 +161,7 @@ program.command("undo")
   .argument("<bulletId>", "ID of the bullet to undo")
   .option("--feedback", "Undo the most recent feedback event instead of un-deprecating")
   .option("--hard", "Permanently delete the bullet (cannot be undone)")
+  .option("--yes", "Confirm irreversible deletion (required for --hard in non-interactive mode)")
   .option("--json", "Output JSON")
   .action(async (id: string, opts: any) => await undoCommand(id, opts));
 
@@ -167,7 +184,17 @@ program.command("doctor")
   .description("Check system health and optionally fix issues")
   .option("--json", "Output JSON")
   .option("--fix", "Automatically fix recoverable issues")
-  .action(async (opts: any) => await doctorCommand(opts));
+  .option("--dry-run", "Show what would change without applying fixes")
+  .option("--force", "Allow cautious fixes (use with --fix)")
+  .option("--no-interactive", "Disable interactive prompts (CI-safe)")
+  .option("--self-test", "Run end-to-end self-test (slow)")
+  .option("--full", "Run full doctor suite (alias for --self-test)")
+  .action(async (opts: any) =>
+    await doctorCommand({
+      ...opts,
+      selfTest: Boolean(opts.selfTest || opts.full),
+    })
+  );
 
 // --- Reflect ---
 program.command("reflect")
@@ -217,6 +244,39 @@ program.command("quickstart")
   .description("Explain the system to an agent (self-documentation)")
   .option("--json", "Output JSON")
   .action(async (opts: any) => await quickstartCommand(opts));
+
+// --- Privacy ---
+const privacy = program.command("privacy")
+  .description("Privacy controls (cross-agent enrichment)");
+
+privacy.command("status")
+  .description("Show cross-agent settings and data flow summary")
+  .option("--days <n>", "Lookback days for cass timeline stats", toInt)
+  .option("--json", "Output JSON")
+  .action(async (opts: any) => await privacyCommand("status", [], opts));
+
+privacy.command("enable")
+  .description("Enable cross-agent enrichment (requires explicit consent)")
+  .argument("[agents...]", "Optional allowlist of agents (e.g., claude cursor codex aider)")
+  .option("--json", "Output JSON")
+  .action(async (agents: string[], opts: any) => await privacyCommand("enable", agents, opts));
+
+privacy.command("disable")
+  .description("Disable cross-agent enrichment")
+  .option("--json", "Output JSON")
+  .action(async (opts: any) => await privacyCommand("disable", [], opts));
+
+privacy.command("allow")
+  .description("Allow a specific agent for cross-agent enrichment")
+  .argument("<agent>", "Agent name (e.g., claude, cursor, codex, aider)")
+  .option("--json", "Output JSON")
+  .action(async (agent: string, opts: any) => await privacyCommand("allow", [agent], opts));
+
+privacy.command("deny")
+  .description("Remove a specific agent from the allowlist")
+  .argument("<agent>", "Agent name (e.g., claude, cursor, codex, aider)")
+  .option("--json", "Output JSON")
+  .action(async (agent: string, opts: any) => await privacyCommand("deny", [agent], opts));
 
 // --- Serve (HTTP-only MCP surface) ---
 program.command("serve")

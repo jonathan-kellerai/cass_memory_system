@@ -1,4 +1,4 @@
-import { log, warn, jaccardSimilarity, hashContent } from "./utils.js";
+import { log, warn, jaccardSimilarity, hashContent, getCliName } from "./utils.js";
 
 export const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   // AWS
@@ -7,19 +7,29 @@ export const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = 
 
   // Generic API keys/tokens
   { pattern: /Bearer\s+[A-Za-z0-9\-\._~\+\/]+=*/g, replacement: "[BEARER_TOKEN]" },
-  { pattern: /api[_-]?key["\s:=]+["']?[A-Za-z0-9\-_]{20,}["']?/gi, replacement: "[API_KEY]" },
-  { pattern: /token["\s:=]+["']?[A-Za-z0-9\-_]{20,}["']?/gi, replacement: "[TOKEN]" },
+  
+  // Use capturing groups to preserve JSON/YAML structure (keys, quotes, separators)
+  // Matches: (key + separator + quote)(value)(quote)
+  { 
+    pattern: /(api[_-]?key["\s:=]+["']?)([A-Za-z0-9\-_]{20,})(["']?)/gi, 
+    replacement: "$1[API_KEY]$3" 
+  },
+  { 
+    pattern: /(token["\s:=]+["']?)([A-Za-z0-9\-_]{20,})(["']?)/gi, 
+    replacement: "$1[TOKEN]$3" 
+  },
 
-  // Private keys
+  // Private keys (block replacement is safe as these are usually multiline strings or standalone)
   { pattern: /-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g, replacement: "[PRIVATE_KEY]" },
 
   // Passwords in common formats (built dynamically to avoid static secret scanners)
+  // Preserves surrounding syntax to avoid breaking JSON/Config files
   {
     pattern: new RegExp(
-      `${["pa","ss","wo","rd"].join("")}["\\s:=]+["'][^"']{8,}["']`,
+      `(${["pa","ss","wo","rd"].join("")}["\\s:=]+["'])([^"']{8,})(["'])`,
       "gi"
     ),
-    replacement: '[CREDENTIAL_REDACTED]'
+    replacement: '$1[CREDENTIAL_REDACTED]$3'
   },
 
   // GitHub tokens
@@ -113,7 +123,7 @@ export function sanitize(
 
   if (config.auditLog && stats.length > 0) {
     const total = stats.reduce((sum, stat) => sum + stat.count, 0);
-    const prefix = "[cass-memory][sanitize]";
+    const prefix = `[${getCliName()}][sanitize]`;
     log(`${prefix} replaced ${total} matches`, true);
     if (config.auditLevel === "debug") {
       for (const stat of stats) {

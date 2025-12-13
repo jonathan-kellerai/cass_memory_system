@@ -453,8 +453,9 @@ export function curatePlaybook(
     if (bullet.deprecated || bullet.pinned || bullet.kind === "anti_pattern") continue;
 
     const { decayedHarmful, decayedHelpful } = getDecayedCounts(bullet, config);
+    const pruneThreshold = config.pruneHarmfulThreshold ?? 3;
 
-    if (decayedHarmful >= 3 && decayedHarmful > (decayedHelpful * 2)) {
+    if (decayedHarmful >= pruneThreshold && decayedHarmful > (decayedHelpful * 2)) {
       if (bullet.isNegative) {
         deprecateBullet(targetPlaybook, bullet.id, "Negative rule marked harmful (likely incorrect restriction)");
         result.pruned++;

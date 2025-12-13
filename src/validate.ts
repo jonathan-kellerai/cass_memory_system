@@ -214,6 +214,24 @@ export async function validateDelta(
     };
   }
 
+  // Optimize: If gate suggests "draft" due to lack of evidence (0 sessions),
+  // skip LLM validation (which would likely reject due to lack of evidence)
+  // and accept as draft immediately.
+  if (gate.suggestedState === "draft" && gate.sessionCount === 0) {
+    decisionLog.push({
+      timestamp: now(),
+      phase: "add",
+      action: "accepted",
+      reason: `Accepted as draft (new pattern/no history): ${gate.reason}`,
+      content: content.slice(0, 100)
+    });
+    return {
+        valid: true,
+        gate,
+        decisionLog
+    };
+  }
+
   // 2. Run LLM
   const keywords = extractKeywords(content);
   const evidenceHits = await safeCassSearch(keywords.join(" "), { limit: 10 }, config.cassPath);
