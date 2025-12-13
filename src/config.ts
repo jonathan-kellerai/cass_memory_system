@@ -34,6 +34,7 @@ export const DEFAULT_CONFIG: Config = {
     auditLog: true,
   },
   semanticSearchEnabled: false,
+  semanticWeight: 0.6,
   embeddingModel: "Xenova/all-MiniLM-L6-v2",
   verbose: false,
   jsonOutput: false,
@@ -82,7 +83,7 @@ async function loadConfigFile(filePath: string): Promise<Partial<Config>> {
   try {
     const content = await fs.readFile(expanded, "utf-8");
     const ext = path.extname(expanded);
-    
+
     if (ext === ".yaml" || ext === ".yml") {
       return normalizeYamlKeys(yaml.parse(content));
     } else {
@@ -94,16 +95,60 @@ async function loadConfigFile(filePath: string): Promise<Partial<Config>> {
   }
 }
 
+/**
+ * Load repo-level config with format parity.
+ * Supports both .cass/config.json and .cass/config.yaml (.yml).
+ * Precedence: JSON preferred if both exist (deterministic behavior).
+ *
+ * @returns Loaded config and which source was used (for diagnostics)
+ */
+async function loadRepoConfig(repoCassDir: string): Promise<{
+  config: Partial<Config>;
+  source: string | null;
+}> {
+  const jsonPath = path.join(repoCassDir, "config.json");
+  const yamlPath = path.join(repoCassDir, "config.yaml");
+  const ymlPath = path.join(repoCassDir, "config.yml");
+
+  // Check which files exist
+  const [jsonExists, yamlExists, ymlExists] = await Promise.all([
+    fileExists(jsonPath),
+    fileExists(yamlPath),
+    fileExists(ymlPath),
+  ]);
+
+  // Prefer JSON if it exists (deterministic precedence)
+  if (jsonExists) {
+    const config = await loadConfigFile(jsonPath);
+    return { config, source: jsonPath };
+  }
+
+  // Fall back to YAML
+  if (yamlExists) {
+    const config = await loadConfigFile(yamlPath);
+    return { config, source: yamlPath };
+  }
+
+  // Fall back to YML
+  if (ymlExists) {
+    const config = await loadConfigFile(ymlPath);
+    return { config, source: ymlPath };
+  }
+
+  return { config: {}, source: null };
+}
+
 export async function loadConfig(cliOverrides: Partial<Config> = {}): Promise<Config> {
   const globalConfigPath = expandPath("~/.cass-memory/config.json");
   const globalConfig = await loadConfigFile(globalConfigPath);
 
   let repoConfig: Partial<Config> = {};
   const repoCassDir = await resolveRepoDir();
-  
+
   if (repoCassDir) {
-    repoConfig = await loadConfigFile(path.join(repoCassDir, "config.yaml"));
-    
+    const { config } = await loadRepoConfig(repoCassDir);
+    repoConfig = config;
+
     // Security: Prevent repo from overriding sensitive paths
     delete repoConfig.cassPath;
     delete repoConfig.playbookPath;

@@ -123,7 +123,7 @@ These comments are automatically parsed during reflection and update rule confid
 
 ### Cross-Agent Learning
 
-Every agent contributes to shared memory:
+Every agent's sessions feed the shared memory:
 
 ```
 Claude Code session    →  ┐
@@ -301,8 +301,15 @@ For Claude Code users, add a post-session hook in `.claude/hooks.json`:
 
 ### Configuration
 
-Config lives at `~/.cass-memory/config.json` (global) and `.cass/config.json` (repo).
-Repo config overrides global config. Command-line flags override both.
+Config lives at `~/.cass-memory/config.json` (global) and `.cass/config.{json,yaml,yml}` (repo).
+
+**Precedence (highest wins):**
+1. CLI flags
+2. Repo config (`.cass/config.json` preferred over `.yaml`/`.yml` if multiple exist)
+3. Global config (`~/.cass-memory/config.json`)
+4. Schema defaults
+
+**Security:** Repo config cannot override sensitive paths (`cassPath`, `playbookPath`, `diaryDir`).
 
 **Environment Variables:**
 
@@ -352,6 +359,7 @@ Repo config overrides global config. Command-line flags override both.
 | `crossAgent.agents` | string[] | `[]` | Optional allowlist; empty means “all agents” when enabled |
 | `crossAgent.auditLog` | boolean | `true` | Write local audit events when cross-agent enrichment occurs |
 | `semanticSearchEnabled` | boolean | `false` | Enable embedding-based search |
+| `semanticWeight` | number | `0.6` | Weight of semantic similarity vs keyword relevance (0-1) |
 | `embeddingModel` | string | `Xenova/all-MiniLM-L6-v2` | Embedding model for semantic search (set to `none` to force keyword-only) |
 | `dedupSimilarityThreshold` | number | `0.85` | Threshold for duplicate detection |
 
@@ -511,11 +519,11 @@ cd cass_memory_system
 bun install
 
 # Dev with hot reload
-bun --watch run src/cass-memory.ts <command>
+bun --watch run src/cm.ts <command>
 
-# Tests
+# Tests (all)
 bun test
-bun test --watch
+bun run test:watch
 
 # Type check
 bun run typecheck
@@ -523,6 +531,23 @@ bun run typecheck
 # Build all platforms
 bun run build:all
 ```
+
+### Testing
+
+This repo uses Bun's built-in runner (`bun test`). Tests are organized by intent using filename suffixes and a small set of scripts:
+
+| Category | Naming convention | Run |
+|---------|-------------------|-----|
+| Unit | `*.test.ts` (default) | `bun run test:unit` |
+| Integration | `*.integration.test.ts` and `test/integration/**` | `bun run test:integration` |
+| LLM (mocked) | `llm.mocked.test.ts` (never call real APIs) | `bun run test:unit` |
+| E2E | `*.e2e.test.ts` (full CLI flows) | `bun run test:e2e` |
+| Property | `*.property.test.ts` (fast-check) | `bun run test:property` |
+
+Coverage:
+
+- Target: ~80% lines, 80% functions, 70% branches
+- Run: `bun run test:coverage` (use `bun run test:ci` for longer timeouts)
 
 ---
 

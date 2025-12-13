@@ -396,6 +396,187 @@ session_lookback_days: 14
 });
 
 // =============================================================================
+// loadConfig() - Repo config format parity (JSON vs YAML)
+// =============================================================================
+describe("loadConfig() - Repo config format parity", () => {
+  test("loads JSON config from .cass/config.json in git repo", async () => {
+    await withTempCassHome(async (env) => {
+      await withTempDir("config-repo-json", async (repoDir) => {
+        execSync("git init", { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.email "test@test.com"', { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.name "Test"', { cwd: repoDir, stdio: "pipe" });
+
+        await mkdir(join(repoDir, ".cass"), { recursive: true });
+        await writeFile(
+          join(repoDir, ".cass", "config.json"),
+          JSON.stringify({
+            provider: "google",
+            model: "gemini-1.5-pro",
+            verbose: true,
+          })
+        );
+
+        const originalCwd = process.cwd();
+        try {
+          process.chdir(repoDir);
+          const config = await loadConfig();
+
+          expect(config.provider).toBe("google");
+          expect(config.model).toBe("gemini-1.5-pro");
+          expect(config.verbose).toBe(true);
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("loads .cass/config.yml (alternative YAML extension)", async () => {
+    await withTempCassHome(async (env) => {
+      await withTempDir("config-repo-yml", async (repoDir) => {
+        execSync("git init", { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.email "test@test.com"', { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.name "Test"', { cwd: repoDir, stdio: "pipe" });
+
+        await mkdir(join(repoDir, ".cass"), { recursive: true });
+        await writeFile(
+          join(repoDir, ".cass", "config.yml"),
+          `provider: openai
+model: gpt-4o
+verbose: true
+`
+        );
+
+        const originalCwd = process.cwd();
+        try {
+          process.chdir(repoDir);
+          const config = await loadConfig();
+
+          expect(config.provider).toBe("openai");
+          expect(config.model).toBe("gpt-4o");
+          expect(config.verbose).toBe(true);
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("JSON takes precedence over YAML when both exist", async () => {
+    await withTempCassHome(async (env) => {
+      await withTempDir("config-repo-both", async (repoDir) => {
+        execSync("git init", { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.email "test@test.com"', { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.name "Test"', { cwd: repoDir, stdio: "pipe" });
+
+        await mkdir(join(repoDir, ".cass"), { recursive: true });
+
+        // Create both JSON and YAML configs
+        await writeFile(
+          join(repoDir, ".cass", "config.json"),
+          JSON.stringify({
+            provider: "google",
+            model: "gemini-from-json",
+          })
+        );
+        await writeFile(
+          join(repoDir, ".cass", "config.yaml"),
+          `provider: openai
+model: gpt-from-yaml
+`
+        );
+
+        const originalCwd = process.cwd();
+        try {
+          process.chdir(repoDir);
+          const config = await loadConfig();
+
+          // JSON should win
+          expect(config.provider).toBe("google");
+          expect(config.model).toBe("gemini-from-json");
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("YAML takes precedence over YML when both exist", async () => {
+    await withTempCassHome(async (env) => {
+      await withTempDir("config-repo-yaml-yml", async (repoDir) => {
+        execSync("git init", { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.email "test@test.com"', { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.name "Test"', { cwd: repoDir, stdio: "pipe" });
+
+        await mkdir(join(repoDir, ".cass"), { recursive: true });
+
+        // Create both YAML and YML configs (no JSON)
+        await writeFile(
+          join(repoDir, ".cass", "config.yaml"),
+          `provider: openai
+model: from-yaml
+`
+        );
+        await writeFile(
+          join(repoDir, ".cass", "config.yml"),
+          `provider: google
+model: from-yml
+`
+        );
+
+        const originalCwd = process.cwd();
+        try {
+          process.chdir(repoDir);
+          const config = await loadConfig();
+
+          // .yaml should win over .yml
+          expect(config.provider).toBe("openai");
+          expect(config.model).toBe("from-yaml");
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("JSON repo config still respects security restrictions", async () => {
+    await withTempCassHome(async (env) => {
+      await withTempDir("config-repo-json-security", async (repoDir) => {
+        execSync("git init", { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.email "test@test.com"', { cwd: repoDir, stdio: "pipe" });
+        execSync('git config user.name "Test"', { cwd: repoDir, stdio: "pipe" });
+
+        await mkdir(join(repoDir, ".cass"), { recursive: true });
+        await writeFile(
+          join(repoDir, ".cass", "config.json"),
+          JSON.stringify({
+            cassPath: "/malicious/cass",
+            playbookPath: "/malicious/playbook.yaml",
+            diaryDir: "/malicious/diary",
+            provider: "openai",
+          })
+        );
+
+        const originalCwd = process.cwd();
+        try {
+          process.chdir(repoDir);
+          const config = await loadConfig();
+
+          // Sensitive paths should use defaults
+          expect(config.cassPath).toBe("cass");
+          expect(config.playbookPath).toBe("~/.cass-memory/playbook.yaml");
+          expect(config.diaryDir).toBe("~/.cass-memory/diary");
+          // Non-sensitive values should be applied
+          expect(config.provider).toBe("openai");
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+});
+
+// =============================================================================
 // loadConfig() - Merge precedence
 // =============================================================================
 describe("loadConfig() - Merge precedence", () => {
