@@ -127,7 +127,7 @@ function detectFormat(content: string, filePath?: string): "yaml" | "json" {
 export async function playbookCommand(
   action: "list" | "add" | "remove" | "get" | "export" | "import",
   args: string[],
-  flags: { category?: string; json?: boolean; hard?: boolean; yes?: boolean; reason?: string; all?: boolean; replace?: boolean; yaml?: boolean }
+  flags: { category?: string; json?: boolean; hard?: boolean; yes?: boolean; dryRun?: boolean; reason?: string; all?: boolean; replace?: boolean; yaml?: boolean }
 ) {
   const config = await loadConfig();
 
@@ -425,7 +425,7 @@ export async function playbookCommand(
     const { loadPlaybook } = await import("../playbook.js");
     let savePath = config.playbookPath;
     let checkPlaybook = await loadPlaybook(config.playbookPath);
-    
+
     if (!findBullet(checkPlaybook, id)) {
       const repoDir = await resolveRepoDir();
       const repoPath = repoDir ? path.join(repoDir, "playbook.yaml") : null;
@@ -448,12 +448,55 @@ export async function playbookCommand(
       }
     }
 
-    if (flags.hard) {
-      const candidate = findBullet(checkPlaybook, id);
-      const preview = candidate
-        ? truncate(candidate.content.trim().replace(/\s+/g, " "), 100)
-        : "";
+    const candidate = findBullet(checkPlaybook, id);
+    const preview = candidate
+      ? truncate(candidate.content.trim().replace(/\s+/g, " "), 100)
+      : "";
 
+    // Handle --dry-run: show what would happen without making changes
+    if (flags.dryRun) {
+      const cli = getCliName();
+      const actionType = flags.hard ? "delete" : "deprecate";
+      const plan = {
+        dryRun: true,
+        action: actionType,
+        bulletId: id,
+        path: savePath,
+        preview,
+        category: candidate?.category,
+        helpfulCount: candidate?.helpfulCount,
+        harmfulCount: candidate?.harmfulCount,
+        wouldChange: flags.hard
+          ? "Bullet would be permanently removed from playbook"
+          : "Bullet would be marked as deprecated (can be restored with cm undo)",
+        applyCommand: flags.hard
+          ? `${cli} playbook remove ${id} --hard --yes`
+          : `${cli} playbook remove ${id}${flags.reason ? ` --reason "${flags.reason}"` : ""}`,
+      };
+
+      if (flags.json) {
+        console.log(JSON.stringify({ success: true, plan }, null, 2));
+      } else {
+        console.log(chalk.bold.yellow("DRY RUN - No changes will be made"));
+        console.log(chalk.gray("─".repeat(50)));
+        console.log();
+        console.log(`Action: ${chalk.bold(actionType.toUpperCase())} bullet`);
+        console.log(`Bullet ID: ${chalk.cyan(id)}`);
+        console.log(`File: ${chalk.gray(savePath)}`);
+        console.log(`Preview: ${chalk.cyan(`"${preview}"`)}`);
+        if (candidate?.category) {
+          console.log(`Category: ${chalk.cyan(candidate.category)}`);
+        }
+        console.log(`Feedback: ${candidate?.helpfulCount || 0}+ / ${candidate?.harmfulCount || 0}-`);
+        console.log();
+        console.log(chalk.yellow(`Would: ${plan.wouldChange}`));
+        console.log();
+        console.log(chalk.gray(`To apply: ${plan.applyCommand}`));
+      }
+      return;
+    }
+
+    if (flags.hard) {
       const confirmed = await confirmDangerousAction({
         action: `Permanently delete bullet ${id}`,
         details: [
@@ -501,16 +544,16 @@ export async function playbookCommand(
         }
 
         if (flags.hard) {
-          const preview = truncate(bullet.content.trim().replace(/\s+/g, " "), 100);
+          const bulletPreview = truncate(bullet.content.trim().replace(/\s+/g, " "), 100);
           playbook.bullets = playbook.bullets.filter(b => b.id !== id);
           await savePlaybook(playbook, savePath);
 
           if (flags.json) {
-            console.log(JSON.stringify({ success: true, id, action: "deleted", path: savePath, preview }, null, 2));
+            console.log(JSON.stringify({ success: true, id, action: "deleted", path: savePath, preview: bulletPreview }, null, 2));
           } else {
             console.log(chalk.green(`✓ Deleted bullet ${id}`));
             console.log(chalk.gray(`  File: ${savePath}`));
-            console.log(chalk.gray(`  Preview: "${preview}"`));
+            console.log(chalk.gray(`  Preview: "${bulletPreview}"`));
           }
           return;
         } else {

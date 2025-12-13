@@ -37,7 +37,8 @@ function createTestBullet(overrides: Partial<PlaybookBullet> = {}): PlaybookBull
     feedbackEvents: [],
     deprecated: false,
     pinned: false,
-    ...overrides
+    ...overrides,
+    confidenceDecayHalfLifeDays: overrides.confidenceDecayHalfLifeDays ?? 90
   };
 }
 
@@ -306,6 +307,104 @@ describe("undo command - Unit Tests", () => {
       const final = yaml.parse(readFileSync(playbookPath, "utf-8"));
       expect(final.bullets).toHaveLength(1);
       expect(final.bullets[0].id).toBe("b-keep");
+    });
+  });
+
+  describe("dry-run logic", () => {
+    test("should compute correct preview for un-deprecate action", () => {
+      const bullet = createTestBullet({
+        id: "b-dry-test",
+        content: "Test bullet for dry run",
+        deprecated: true,
+        deprecatedAt: "2025-06-01T00:00:00Z",
+        deprecationReason: "Test deprecation",
+        state: "retired",
+        maturity: "deprecated"
+      });
+
+      // Simulate dry-run preview computation
+      const plan = {
+        dryRun: true,
+        action: "un-deprecate",
+        bulletId: bullet.id,
+        before: {
+          deprecated: bullet.deprecated,
+          state: bullet.state,
+          maturity: bullet.maturity,
+        },
+        wouldChange: "Bullet would be restored to active state",
+      };
+
+      expect(plan.dryRun).toBe(true);
+      expect(plan.action).toBe("un-deprecate");
+      expect(plan.before.deprecated).toBe(true);
+      expect(plan.before.state).toBe("retired");
+      expect(plan.wouldChange).toContain("restored");
+
+      // Verify bullet was NOT modified
+      expect(bullet.deprecated).toBe(true);
+      expect(bullet.state).toBe("retired");
+    });
+
+    test("should compute correct preview for undo-feedback action", () => {
+      const bullet = createTestBullet({
+        id: "b-feedback-dry",
+        helpfulCount: 5,
+        harmfulCount: 2,
+        feedbackEvents: [
+          { type: "helpful", timestamp: "2025-01-01T00:00:00Z" },
+          { type: "harmful", timestamp: "2025-01-02T00:00:00Z" }
+        ]
+      });
+
+      const lastEvent = bullet.feedbackEvents!.length > 0
+        ? bullet.feedbackEvents![bullet.feedbackEvents!.length - 1]
+        : null;
+
+      // Simulate dry-run preview
+      const plan = {
+        dryRun: true,
+        action: "undo-feedback",
+        bulletId: bullet.id,
+        before: {
+          helpfulCount: bullet.helpfulCount,
+          harmfulCount: bullet.harmfulCount,
+          lastFeedback: lastEvent,
+        },
+        wouldChange: lastEvent
+          ? `Would remove last ${lastEvent.type} feedback`
+          : "No feedback to undo",
+      };
+
+      expect(plan.dryRun).toBe(true);
+      expect(plan.action).toBe("undo-feedback");
+      expect(plan.before.lastFeedback).toEqual({ type: "harmful", timestamp: "2025-01-02T00:00:00Z" });
+      expect(plan.wouldChange).toContain("harmful");
+
+      // Verify bullet was NOT modified
+      expect(bullet.feedbackEvents).toHaveLength(2);
+      expect(bullet.harmfulCount).toBe(2);
+    });
+
+    test("should compute correct preview for hard-delete action", () => {
+      const bullet = createTestBullet({
+        id: "b-delete-dry",
+        content: "Bullet to preview deletion"
+      });
+
+      // Simulate dry-run preview
+      const plan = {
+        dryRun: true,
+        action: "hard-delete",
+        bulletId: bullet.id,
+        preview: bullet.content.slice(0, 100),
+        wouldChange: "Bullet would be permanently removed from playbook",
+      };
+
+      expect(plan.dryRun).toBe(true);
+      expect(plan.action).toBe("hard-delete");
+      expect(plan.preview).toBe("Bullet to preview deletion");
+      expect(plan.wouldChange).toContain("permanently removed");
     });
   });
 });

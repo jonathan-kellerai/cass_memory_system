@@ -101,6 +101,7 @@ playbook.command("remove")
   .argument("<id>", "Rule ID")
   .option("--hard", "Permanently delete")
   .option("--yes", "Confirm irreversible deletion (required for --hard in non-interactive mode)")
+  .option("--dry-run", "Preview what would be removed without making changes")
   .option("--reason <text>", "Reason for removal")
   .option("--json", "Output JSON")
   .action(async (id: string, opts: any) => await playbookCommand("remove", [id], opts));
@@ -163,6 +164,7 @@ program.command("undo")
   .option("--feedback", "Undo the most recent feedback event instead of un-deprecating")
   .option("--hard", "Permanently delete the bullet (cannot be undone)")
   .option("--yes", "Confirm irreversible deletion (required for --hard in non-interactive mode)")
+  .option("--dry-run", "Preview what would change without making changes")
   .option("--json", "Output JSON")
   .action(async (id: string, opts: any) => await undoCommand(id, opts));
 

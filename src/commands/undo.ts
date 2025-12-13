@@ -18,6 +18,7 @@ export interface UndoFlags {
   feedback?: boolean;
   hard?: boolean;
   yes?: boolean;
+  dryRun?: boolean;
   json?: boolean;
   reason?: string;
 }
@@ -166,11 +167,100 @@ export async function undoCommand(
 
   const { playbook, path: playbookPath, location: loc } = location;
   const bullet = findBullet(playbook, bulletId)!;
+  const preview = truncate(bullet.content.trim().replace(/\s+/g, " "), 100);
+
+  // Handle --dry-run: show what would happen without making changes
+  if (flags.dryRun) {
+    const events = bullet.feedbackEvents || [];
+    const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+
+    let actionType: string;
+    let wouldChange: string;
+    let applyCommand: string;
+
+    if (flags.hard) {
+      actionType = "hard-delete";
+      wouldChange = "Bullet would be permanently removed from playbook";
+      applyCommand = `${cli} undo ${bulletId} --hard --yes`;
+    } else if (flags.feedback) {
+      if (!lastEvent) {
+        const error = { error: `No feedback events to undo for bullet ${bulletId}` };
+        if (flags.json) {
+          console.log(JSON.stringify(error, null, 2));
+        } else {
+          console.error(chalk.yellow(`No feedback events to undo for bullet ${bulletId}`));
+        }
+        process.exit(1);
+      }
+      actionType = "undo-feedback";
+      wouldChange = `Would remove last ${lastEvent.type} feedback from ${lastEvent.timestamp?.slice(0, 10) || "unknown"}`;
+      applyCommand = `${cli} undo ${bulletId} --feedback`;
+    } else {
+      if (!bullet.deprecated) {
+        const error = {
+          error: `Bullet ${bulletId} is not deprecated`,
+          hint: "Use --feedback to undo the last feedback event, or --hard to delete"
+        };
+        if (flags.json) {
+          console.log(JSON.stringify(error, null, 2));
+        } else {
+          console.error(chalk.yellow(`Bullet ${bulletId} is not deprecated.`));
+          console.log(chalk.gray("Use --feedback to undo the last feedback event, or --hard to delete."));
+        }
+        process.exit(1);
+      }
+      actionType = "un-deprecate";
+      wouldChange = "Bullet would be restored to active state (deprecated → active, maturity reset to candidate if needed)";
+      applyCommand = `${cli} undo ${bulletId}`;
+    }
+
+    const plan = {
+      dryRun: true,
+      action: actionType,
+      bulletId,
+      path: playbookPath,
+      location: loc,
+      preview,
+      category: bullet.category,
+      before: {
+        deprecated: bullet.deprecated,
+        state: bullet.state,
+        maturity: bullet.maturity,
+        helpfulCount: bullet.helpfulCount,
+        harmfulCount: bullet.harmfulCount,
+        ...(flags.feedback && lastEvent ? { lastFeedback: lastEvent } : {}),
+      },
+      wouldChange,
+      applyCommand,
+    };
+
+    if (flags.json) {
+      console.log(JSON.stringify({ success: true, plan }, null, 2));
+    } else {
+      console.log(chalk.bold.yellow("DRY RUN - No changes will be made"));
+      console.log(chalk.gray("─".repeat(50)));
+      console.log();
+      console.log(`Action: ${chalk.bold(actionType.toUpperCase())}`);
+      console.log(`Bullet ID: ${chalk.cyan(bulletId)}`);
+      console.log(`File: ${chalk.gray(playbookPath)} (${loc})`);
+      console.log(`Preview: ${chalk.cyan(`"${preview}"`)}`);
+      console.log(`Category: ${chalk.cyan(bullet.category)}`);
+      console.log(`Feedback: ${bullet.helpfulCount || 0}+ / ${bullet.harmfulCount || 0}-`);
+      console.log(`State: ${bullet.state}, Maturity: ${bullet.maturity}, Deprecated: ${bullet.deprecated}`);
+      if (flags.feedback && lastEvent) {
+        console.log(`Last feedback: ${chalk.yellow(lastEvent.type)} at ${lastEvent.timestamp?.slice(0, 10) || "unknown"}`);
+      }
+      console.log();
+      console.log(chalk.yellow(`Would: ${wouldChange}`));
+      console.log();
+      console.log(chalk.gray(`To apply: ${applyCommand}`));
+    }
+    return;
+  }
 
   let result: UndoResult;
 
   if (flags.hard) {
-    const preview = truncate(bullet.content.trim().replace(/\s+/g, " "), 100);
     const confirmed = await confirmDangerousAction({
       action: `Permanently delete bullet ${bulletId} (${loc} playbook)`,
       details: [

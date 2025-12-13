@@ -498,6 +498,114 @@ describe("E2E: CLI playbook command", () => {
         expect(capture.errors.some(e => e.includes("not found"))).toBe(true);
       });
     });
+
+    it("shows dry-run preview for deprecate without making changes", async () => {
+      await withTempCassHome(async (env) => {
+        const playbook = createTestPlaybook([
+          createTestBullet({
+            id: "dry-run-test",
+            content: "This bullet will not be deprecated",
+            category: "testing",
+            helpfulCount: 5,
+            harmfulCount: 1
+          })
+        ]);
+        await writeFile(env.playbookPath, yaml.stringify(playbook));
+
+        const capture = captureConsole();
+        try {
+          await playbookCommand("remove", ["dry-run-test"], { dryRun: true, json: true });
+        } finally {
+          capture.restore();
+        }
+
+        const output = capture.logs.join("\n");
+        const result = JSON.parse(output);
+
+        expect(result.success).toBe(true);
+        expect(result.plan).toBeDefined();
+        expect(result.plan.dryRun).toBe(true);
+        expect(result.plan.action).toBe("deprecate");
+        expect(result.plan.bulletId).toBe("dry-run-test");
+        expect(result.plan.preview).toContain("not be deprecated");
+        expect(result.plan.wouldChange).toContain("deprecated");
+        expect(result.plan.applyCommand).toContain("cm playbook remove dry-run-test");
+
+        // Verify bullet was NOT deprecated
+        const savedContent = await readFile(env.playbookPath, "utf-8");
+        const savedPlaybook = yaml.parse(savedContent);
+        expect(savedPlaybook.bullets[0].deprecated).toBe(false);
+      });
+    });
+
+    it("shows dry-run preview for --hard delete without making changes", async () => {
+      await withTempCassHome(async (env) => {
+        const playbook = createTestPlaybook([
+          createTestBullet({
+            id: "dry-run-hard-test",
+            content: "This bullet will not be deleted",
+            category: "testing"
+          })
+        ]);
+        await writeFile(env.playbookPath, yaml.stringify(playbook));
+
+        const capture = captureConsole();
+        try {
+          await playbookCommand("remove", ["dry-run-hard-test"], { dryRun: true, hard: true, json: true });
+        } finally {
+          capture.restore();
+        }
+
+        const output = capture.logs.join("\n");
+        const result = JSON.parse(output);
+
+        expect(result.success).toBe(true);
+        expect(result.plan).toBeDefined();
+        expect(result.plan.dryRun).toBe(true);
+        expect(result.plan.action).toBe("delete");
+        expect(result.plan.bulletId).toBe("dry-run-hard-test");
+        expect(result.plan.wouldChange).toContain("permanently removed");
+        expect(result.plan.applyCommand).toContain("--hard --yes");
+
+        // Verify bullet was NOT deleted
+        const savedContent = await readFile(env.playbookPath, "utf-8");
+        const savedPlaybook = yaml.parse(savedContent);
+        expect(savedPlaybook.bullets.length).toBe(1);
+        expect(savedPlaybook.bullets[0].id).toBe("dry-run-hard-test");
+      });
+    });
+
+    it("shows human-readable dry-run output without --json", async () => {
+      await withTempCassHome(async (env) => {
+        const playbook = createTestPlaybook([
+          createTestBullet({
+            id: "human-dry-run",
+            content: "Human readable dry run test",
+            category: "security"
+          })
+        ]);
+        await writeFile(env.playbookPath, yaml.stringify(playbook));
+
+        const capture = captureConsole();
+        try {
+          await playbookCommand("remove", ["human-dry-run"], { dryRun: true });
+        } finally {
+          capture.restore();
+        }
+
+        const output = capture.logs.join("\n");
+        expect(output).toContain("DRY RUN");
+        expect(output).toContain("DEPRECATE");
+        expect(output).toContain("human-dry-run");
+        expect(output).toContain("Would:");
+        expect(output).toContain("To apply:");
+
+        // Verify bullet was NOT deprecated
+        const savedContent = await readFile(env.playbookPath, "utf-8");
+        const savedPlaybook = yaml.parse(savedContent);
+        expect(savedPlaybook.bullets[0].deprecated).toBe(false);
+      });
+    });
   });
 
   describe("get action", () => {
