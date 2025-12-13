@@ -377,7 +377,7 @@ describe("E2E: CLI playbook command", () => {
 
         const capture = captureConsole();
         try {
-          await playbookCommand("remove", ["to-delete"], { hard: true, json: true });
+          await playbookCommand("remove", ["to-delete"], { hard: true, yes: true, json: true });
         } finally {
           capture.restore();
         }
@@ -392,6 +392,48 @@ describe("E2E: CLI playbook command", () => {
         const savedContent = await readFile(env.playbookPath, "utf-8");
         const savedPlaybook = yaml.parse(savedContent);
         expect(savedPlaybook.bullets.length).toBe(0);
+      });
+    });
+
+    it("refuses hard delete without explicit confirmation (requires --yes in non-interactive/json)", async () => {
+      await withTempCassHome(async (env) => {
+        const playbook = createTestPlaybook([
+          createTestBullet({
+            id: "to-delete",
+            content: "This will NOT be deleted",
+            category: "testing"
+          })
+        ]);
+        await writeFile(env.playbookPath, yaml.stringify(playbook));
+
+        // Mock process.exit to prevent test from exiting
+        const originalExit = process.exit;
+        let exitCode: number | undefined;
+        process.exit = ((code?: number) => {
+          exitCode = code;
+          throw new Error(`process.exit(${code})`);
+        }) as typeof process.exit;
+
+        const capture = captureConsole();
+        try {
+          await playbookCommand("remove", ["to-delete"], { hard: true, json: true });
+        } catch (e: any) {
+          // Expected - process.exit was called
+        } finally {
+          capture.restore();
+          process.exit = originalExit;
+        }
+
+        expect(exitCode).toBe(1);
+        const output = capture.logs.join("\n");
+        const result = JSON.parse(output);
+        expect(result.success).toBe(false);
+
+        // Verify bullet was NOT removed
+        const savedContent = await readFile(env.playbookPath, "utf-8");
+        const savedPlaybook = yaml.parse(savedContent);
+        expect(savedPlaybook.bullets.length).toBe(1);
+        expect(savedPlaybook.bullets[0].id).toBe("to-delete");
       });
     });
 

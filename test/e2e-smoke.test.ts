@@ -53,7 +53,7 @@ describe("E2E CLI Smoke Test", () => {
     const result = runCm(["--help"], testDir);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("cass-memory");
+    expect(result.stdout).toContain("Usage: cm");
     expect(result.stdout).toContain("context");
     expect(result.stdout).toContain("playbook");
     expect(result.stdout).toContain("init");

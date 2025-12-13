@@ -248,6 +248,40 @@ describe("CLI Command Chains E2E", () => {
       expect(getResult2.exitCode).toBe(0);
       expect(JSON.parse(getResult2.stdout).bullet.helpfulCount).toBe(1);
     }, { timeout: 30000 });
+
+    test("undo --hard requires explicit confirmation (--yes) in non-interactive mode", () => {
+      runCm(["init", "--json"], testDir);
+
+      const addResult = runCm([
+        "playbook", "add",
+        "Test rule for hard delete confirmation",
+        "--category", "testing",
+        "--json"
+      ], testDir);
+      expect(addResult.exitCode).toBe(0);
+      const bulletId = JSON.parse(addResult.stdout).bullet.id;
+
+      // Without --yes this should refuse to delete (no TTY in tests)
+      const hardNoConfirm = runCm(["undo", bulletId, "--hard", "--json"], testDir);
+      expect(hardNoConfirm.exitCode).toBe(1);
+
+      // Bullet should still exist
+      const getAfterRefusal = runCm(["playbook", "get", bulletId, "--json"], testDir);
+      expect(getAfterRefusal.exitCode).toBe(0);
+
+      // With --yes it should delete
+      const hardConfirmed = runCm(["undo", bulletId, "--hard", "--yes", "--json"], testDir);
+      expect(hardConfirmed.exitCode).toBe(0);
+      const hardResponse = JSON.parse(hardConfirmed.stdout);
+      expect(hardResponse.success).toBe(true);
+      expect(hardResponse.action).toBe("hard-delete");
+
+      // Bullet should be gone from list
+      const listAfterDelete = runCm(["playbook", "list", "--json"], testDir);
+      expect(listAfterDelete.exitCode).toBe(0);
+      const bullets = JSON.parse(listAfterDelete.stdout);
+      expect(bullets.some((b: any) => b.id === bulletId)).toBe(false);
+    }, { timeout: 30000 });
   });
 
   describe("Stats → Top → Stale Flow", () => {
@@ -352,6 +386,41 @@ describe("CLI Command Chains E2E", () => {
       const doctorResult2 = runCm(["doctor", "--json"], testDir);
       expect(doctorResult2.exitCode).toBeLessThanOrEqual(1);
     }, { timeout: 30000 });
+  });
+
+  describe("Doctor Flags", () => {
+    test("doctor --dry-run does not create or modify files", () => {
+      const dryRun = runCm(["doctor", "--dry-run"], testDir);
+      expect(dryRun.exitCode).toBeLessThanOrEqual(1);
+
+      // Dry-run should not create ~/.cass-memory/
+      const globalDir = join(testDir, ".cass-memory");
+      expect(existsSync(globalDir)).toBe(false);
+    }, { timeout: 30000 });
+
+    test("doctor --fix --no-interactive applies safe fixes without hanging", () => {
+      const fix = runCm(["doctor", "--fix", "--no-interactive"], testDir);
+      expect(fix.exitCode).toBeLessThanOrEqual(1);
+
+      // Safe fixes should create ~/.cass-memory/
+      const globalDir = join(testDir, ".cass-memory");
+      expect(existsSync(globalDir)).toBe(true);
+    }, { timeout: 30000 });
+
+    test("doctor --json --self-test includes selfTest results only when requested", () => {
+      const base = runCm(["doctor", "--json"], testDir);
+      expect(base.exitCode).toBeLessThanOrEqual(1);
+      const baseParsed = JSON.parse(base.stdout);
+      expect(baseParsed.checks).toBeDefined();
+      expect(baseParsed.selfTest).toBeUndefined();
+
+      const withSelfTest = runCm(["doctor", "--json", "--self-test"], testDir);
+      expect(withSelfTest.exitCode).toBeLessThanOrEqual(1);
+      const parsed = JSON.parse(withSelfTest.stdout);
+      expect(parsed.checks).toBeDefined();
+      expect(Array.isArray(parsed.selfTest)).toBe(true);
+      expect(parsed.selfTest.length).toBeGreaterThan(0);
+    }, { timeout: 60000 });
   });
 
   describe("Quickstart → Context Flow", () => {

@@ -203,8 +203,8 @@ describe("Property-based deduplication tests", () => {
     it("different content usually produces different hashes (collision resistance)", () => {
       // This is probabilistic - we test that distinct normalized strings
       // produce distinct hashes in almost all cases
-      const hashes = new Set<string>();
-      const collisions: Array<{ a: string; b: string }> = [];
+      const hashToNormalized = new Map<string, string>();
+      const collisions: Array<{ hash: string; first: string; second: string }> = [];
 
       fc.assert(
         fc.property(
@@ -216,11 +216,13 @@ describe("Property-based deduplication tests", () => {
 
             const hash = hashContent(s);
 
-            // Check if we've seen this hash before with different content
-            if (hashes.has(hash)) {
-              collisions.push({ a: s, b: hash });
+            // Only treat this as a collision if two *different normalized strings*
+            // map to the same hash. Repeats due to normalization are expected.
+            const existing = hashToNormalized.get(hash);
+            if (existing && existing !== normalized) {
+              collisions.push({ hash, first: existing, second: normalized });
             }
-            hashes.add(hash);
+            if (!existing) hashToNormalized.set(hash, normalized);
 
             return true; // Always pass, we check collisions at the end
           }
@@ -230,7 +232,7 @@ describe("Property-based deduplication tests", () => {
 
       // Allow very few collisions (SHA-256 truncated to 16 hex chars = 64 bits)
       // With 1000 samples, birthday paradox gives ~0.00003% collision chance
-      expect(collisions.length).toBeLessThan(5);
+      expect(collisions.length).toBe(0);
     });
   });
 

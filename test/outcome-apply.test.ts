@@ -51,6 +51,18 @@ describe("applyOutcomeFeedback", () => {
       const prevCwd = process.cwd();
       const tempRepo = path.dirname(playbookPath);
       process.chdir(tempRepo);
+
+      // applyOutcomeFeedback resolves repo-local .cass/ via git root, so create a tiny git repo.
+      const gitInit = Bun.spawn(["git", "init"], {
+        cwd: tempRepo,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const gitExit = await gitInit.exited;
+      if (gitExit !== 0) {
+        throw new Error("git init failed in temp test repo");
+      }
+
       const cassDir = path.join(tempRepo, ".cass");
       await fs.mkdir(cassDir, { recursive: true });
       const contextLogPath = path.join(cassDir, "context-log.jsonl");
