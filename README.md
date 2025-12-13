@@ -193,9 +193,9 @@ This section is for humans who configure and maintain the system.
 
 **Prebuilt binaries (recommended)**
 - macOS (Apple Silicon):
-  `curl -L https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-darwin-arm64 -o cm && chmod +x cm && sudo mv cm /usr/local/bin/`
+  `curl -L https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-macos-arm64 -o cm && chmod +x cm && sudo mv cm /usr/local/bin/`
 - macOS (Intel):
-  `curl -L https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-darwin-x64 -o cm && chmod +x cm && sudo mv cm /usr/local/bin/`
+  `curl -L https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-macos-x64 -o cm && chmod +x cm && sudo mv cm /usr/local/bin/`
 - Linux (x64):
   `curl -L https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-linux-x64 -o cm && chmod +x cm && sudo mv cm /usr/local/bin/`
 - Windows (x64):
@@ -285,6 +285,7 @@ For Claude Code users, add a post-session hook in `.claude/hooks.json`:
 | `cm outcome-apply` | Apply recorded outcomes to playbook |
 | `cm validate "<rule>"` | Validate a proposed rule against history |
 | `cm forget <id> --reason "<why>"` | Deprecate a rule permanently |
+| `cm undo <id>` | Revert curation decisions (un-deprecate, undo feedback) |
 | `cm audit --days N` | Check sessions for rule violations |
 
 **System Commands** (setup and diagnostics):
@@ -298,6 +299,8 @@ For Claude Code users, add a post-session hook in `.claude/hooks.json`:
 | `cm project --format agents.md` | Export rules for AGENTS.md |
 | `cm usage` | Show LLM cost and usage statistics |
 | `cm serve --port N` | Run MCP server for agent integration |
+| `cm privacy status` | Show cross-agent settings and data flow summary |
+| `cm privacy enable\|disable` | Enable or disable cross-agent enrichment |
 
 ### Configuration
 
@@ -592,7 +595,7 @@ ls ~/.cass-memory/playbook.yaml.backup.*
 cm doctor
 
 # 3. If needed, re-initialize
-cm init --force
+cm init --force  # creates backups; add --yes in non-interactive contexts
 ```
 
 **Missing API key:**
