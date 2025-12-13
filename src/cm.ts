@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
-import { getCliName } from "./utils.js";
+import { getCliName, getVersion } from "./utils.js";
 import { initCommand } from "./commands/init.js";
 import { contextCommand } from "./commands/context.js";
 import { markCommand } from "./commands/mark.js";
@@ -31,12 +31,13 @@ const toFloat = (value: string) => parseFloat(value);
 program
   .name(getCliName())
   .description("Agent-agnostic reflection and memory system")
-  .version("0.1.0");
+  .version(getVersion());
 
 // --- Init ---
 program.command("init")
   .description("Initialize configuration and playbook")
-  .option("-f, --force", "Overwrite existing config")
+  .option("-f, --force", "Reinitialize config/playbook (creates backups)")
+  .option("--yes", "Confirm overwriting existing files (required for --force in non-interactive/--json)")
   .option("--repo", "Initialize repo-level .cass/ directory structure")
   .option("--json", "Output JSON")
   .option("--no-interactive", "Disable interactive prompts")
@@ -229,6 +230,7 @@ program.command("project")
   .description("Export playbook for project documentation")
   .option("--format <fmt>", "Output format: agents.md, claude.md, raw", "agents.md")
   .option("--output <path>", "Write to file instead of stdout")
+  .option("--force", "Overwrite existing output file")
   .option("--top <n>", "Limit rules per category", toInt)
   .option("--show-counts", "Include helpful counts", true)
   .action(async (opts: any) => await projectCommand(opts));
@@ -307,4 +309,39 @@ program.command("outcome-apply")
   .option("--json", "Output JSON")
   .action(async (opts: any) => await applyOutcomeLogCommand(opts));
 
-program.parse();
+/**
+ * Detect if --json flag is present in argv (before commander parses).
+ * Used for error formatting.
+ */
+function hasJsonFlag(): boolean {
+  return process.argv.includes("--json") || process.argv.includes("-j");
+}
+
+/**
+ * Format error for CLI output.
+ * In JSON mode: structured JSON to stdout with exit code.
+ * In human mode: colored error to stderr.
+ */
+function handleError(error: unknown): never {
+  const cliName = getCliName();
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (hasJsonFlag()) {
+    // JSON mode: structured error object to stdout for parseability
+    console.log(JSON.stringify({
+      success: false,
+      error: {
+        message,
+        code: "CLI_ERROR",
+      },
+    }));
+  } else {
+    // Human mode: colored error to stderr
+    console.error(`\x1b[31m${cliName}: error:\x1b[0m ${message}`);
+  }
+
+  process.exit(1);
+}
+
+// Use parseAsync for proper async error handling
+program.parseAsync().catch(handleError);

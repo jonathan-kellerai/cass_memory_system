@@ -10,6 +10,18 @@ import type { ContextResult } from "./types.js";
 
 const execAsync = promisify(exec);
 
+// Import package.json for version (works in Bun runtime and compiled binaries)
+// @ts-ignore - Bun supports JSON imports
+import packageJson from "../package.json";
+
+/**
+ * Get the CLI version from package.json.
+ * Single source of truth for version information.
+ */
+export function getVersion(): string {
+  return packageJson.version || "0.0.0";
+}
+
 export function getCliName(): string {
   const envOverride = process.env.CASS_MEMORY_CLI_NAME?.trim();
   if (envOverride) return envOverride;
@@ -1261,13 +1273,14 @@ export function contentHash(content: string): string {
 export function tokenize(text: string): string[] {
   if (!text) return [];
   
-  // Improved regex: Keeps technical terms like C++, node.js, user_id
+  // Improved regex: Keeps technical terms like C++, node.js, user_id, C#, .NET
   // Matches:
-  // - Sequences of alphanumeric chars including dots, underscores, hyphens, pluses
-  // - But avoids trailing dots
+  // - Words starting with alphanumeric
+  // - Can have internal separators (dot, underscore, hyphen, plus) followed by alphanumerics
+  // - Can end with pluses or hashes (C++, C#)
   
-  // This is a heuristic for code-heavy text
-  const tokens = text.toLowerCase().match(/[a-z0-9]+(?:[._\-+]+[a-z0-9]+)*|[a-z0-9]+/g);
+  const pattern = /[a-z0-9]+(?:[._\-+]+[a-z0-9]+)*[+#]*|[a-z0-9]+[+#]*/g;
+  const tokens = text.toLowerCase().match(pattern);
   
   return (tokens || [])
     .filter(t => t.length >= 2); // Min length 2
@@ -1874,6 +1887,48 @@ export function warn(msg: string): void {
   console.error(chalk.yellow(`[${getCliName()}] WARNING:`), msg);
 }
 
+export type JsonErrorPayload = {
+  success: false;
+  error: string;
+  code?: string;
+  details?: unknown;
+};
+
+export function isJsonOutput(options?: { json?: boolean; format?: string }): boolean {
+  return Boolean(options?.json || options?.format === "json");
+}
+
+export function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
+}
+
+export function printJsonError(
+  err: unknown,
+  options: { code?: string; details?: unknown } = {}
+): void {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : (() => {
+            try {
+              return JSON.stringify(err);
+            } catch {
+              return String(err);
+            }
+          })();
+
+  const payload: JsonErrorPayload = {
+    success: false,
+    error: message,
+    ...(options.code ? { code: options.code } : {}),
+    ...(options.details !== undefined ? { details: options.details } : {}),
+  };
+
+  printJson(payload);
+}
+
 // --- String Normalization ---
 
 /**
@@ -2166,9 +2221,9 @@ function truncateSnippet(text: string, maxLen: number): string {
   if (!text) return "";
   if (text.length <= maxLen) return text;
 
-  // Try to break at word boundary
+  // Try to break at sentence boundary
   const sentenceEnd = text.search(/[.!?]/);
-  if (sentenceEnd > 0 && sentenceEnd < maxLen - 3) {
+  if (sentenceEnd !== -1 && sentenceEnd < maxLen - 3) {
     return text.slice(0, sentenceEnd + 1);
   }
 
@@ -2304,155 +2359,6 @@ function formatDateShort(isoDate: string): string {
   }
 }
 
-// --- Graceful Shutdown ---
-
-/** Global flag to track if shutdown has been initiated */
-let shutdownInProgress = false;
-
-/** Custom cleanup handlers registered via onShutdown */
-const shutdownHandlers: Array<() => void | Promise<void>> = [];
-
-/**
- * Check if an operation is aborted.
- * This signals all operations watching the global abort signal.
- *
- * @param reason - Optional reason for the abort
- *
- * @example
- * // In a SIGINT handler
- * requestAbort("User pressed Ctrl+C");
- */
-export function requestAbort(reason?: string): void {
-  globalAbortController.abort(reason);
-}
-
-/**
- * Reset the global abort controller.
- * Call this at the start of a new top-level operation.
- *
- * @example
- * // At the start of a CLI command
- * resetAbort();
- * try {
- *   await longRunningOperation();
- * } catch (err) {
- *   if (err instanceof AbortError) {
- *     console.log("Operation was cancelled");
- *   }
- * }
- */
-export function resetAbort(): void {
-  globalAbortController = new AbortController();
-}
-
-/**
- * Create a timeout abort signal.
- * Useful for operations that should have a maximum duration.
- *
- * @param timeoutMs - Timeout in milliseconds
- * @returns AbortSignal that will abort after the timeout
- *
- * @example
- * const signal = createTimeoutSignal(5000); // 5 seconds
- * try {
- *   await fetch(url, { signal });
- * } catch (err) {
- *   if (err.name === "AbortError") {
- *     console.log("Request timed out");
- *   }
- * }
- */
-export function createTimeoutSignal(timeoutMs: number): AbortSignal {
-  return AbortSignal.timeout(timeoutMs);
-}
-
-/**
- * Create a combined abort signal from multiple sources.
- * Aborts if any of the source signals abort.
- *
- * @param signals - Array of AbortSignals to combine
- * @returns Combined AbortSignal
- *
- * @example
- * const signal = combineAbortSignals([
- *   getAbortSignal(),           // User cancellation
- *   createTimeoutSignal(30000)  // 30 second timeout
- * ]);
- * await fetch(url, { signal });
- */
-export function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
-  return AbortSignal.any(signals);
-}
-
-/**
- * Run an async operation with abort support.
- * Checks for abort before and after the operation.
- *
- * @param operation - The async operation to run
- * @param checkIntervalMs - Optional: check abort every N ms during long operations
- * @returns The operation result
- * @throws {AbortError} If aborted before or during operation
- *
- * @example
- * const result = await withAbortCheck(async () => {
- *   return await expensiveLLMCall();
- * });
- */
-export async function withAbortCheck<T>(
-  operation: () => Promise<T>,
-  checkIntervalMs?: number
-): Promise<T> {
-  checkAbort();
-
-  if (checkIntervalMs) {
-    // Create a periodic abort checker
-    const intervalId = setInterval(() => {
-      if (globalAbortController.signal.aborted) {
-        clearInterval(intervalId);
-      }
-    }, checkIntervalMs);
-
-    try {
-      const result = await operation();
-      checkAbort();
-      return result;
-    } finally {
-      clearInterval(intervalId);
-    }
-  }
-
-  const result = await operation();
-  checkAbort();
-  return result;
-}
-
-/**
- * Execute operations in sequence, checking for abort between each.
- * Useful for batch processing where you want clean abort points.
- *
- * @param items - Array of items to process
- * @param processor - Async function to process each item
- * @returns Array of results
- * @throws {AbortError} If aborted between operations
- *
- * @example
- * const results = await withAbortableSequence(
- *   sessions,
- *   async (session) => await processSession(session)
- * );
- */
-export async function withAbortableSequence<T, R>(
-  items: T[],
-  processor: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i++) {
-    checkAbort();
-    results.push(await processor(items[i], i));
-  }
-  return results;
-}
-
 // --- Inline Feedback Parsing ---
 
 /**
@@ -2553,4 +2459,130 @@ export function inlineFeedbackToDeltas(
     sourceSession: sessionPath,
     reason: f.reason
   }));
+}
+// --- Graceful Shutdown ---
+
+let shutdownInProgress = false;
+const shutdownHandlers: Array<() => void | Promise<void>> = [];
+let globalAbortController = new AbortController();
+
+export class AbortError extends Error {
+  readonly reason: unknown;
+
+  constructor(message = "Operation aborted", reason?: unknown) {
+    super(message);
+    this.name = "AbortError";
+    this.reason = reason ?? message;
+  }
+}
+
+export function isShutdownInProgress(): boolean {
+  return shutdownInProgress;
+}
+
+export function onShutdown(handler: () => void | Promise<void>): () => void {
+  shutdownHandlers.push(handler);
+  let removed = false;
+  return () => {
+    if (removed) return;
+    removed = true;
+    const idx = shutdownHandlers.indexOf(handler);
+    if (idx !== -1) shutdownHandlers.splice(idx, 1);
+  };
+}
+
+export function getAbortSignal(): AbortSignal {
+  return globalAbortController.signal;
+}
+
+export function checkAbort(): void {
+  if (globalAbortController.signal.aborted) {
+    const reason = (globalAbortController.signal as any).reason;
+    throw new AbortError(typeof reason === "string" ? reason : "Operation cancelled");
+  }
+}
+
+export function isAborted(): boolean {
+  return globalAbortController.signal.aborted;
+}
+
+export function requestAbort(reason?: string): void {
+  const msg = typeof reason === "string" && reason.trim() ? reason : "Operation cancelled";
+  globalAbortController.abort(msg);
+}
+
+export function resetAbort(): void {
+  globalAbortController = new AbortController();
+}
+
+export function createTimeoutSignal(timeoutMs: number): AbortSignal {
+  return AbortSignal.timeout(timeoutMs);
+}
+
+export function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
+  return AbortSignal.any(signals);
+}
+
+export async function withAbortCheck<T>(
+  operation: () => Promise<T>,
+  checkIntervalMs?: number
+): Promise<T> {
+  checkAbort();
+  if (checkIntervalMs) {
+    const intervalId = setInterval(() => {
+      if (globalAbortController.signal.aborted) {
+        clearInterval(intervalId);
+      }
+    }, checkIntervalMs);
+    try {
+      const result = await operation();
+      checkAbort();
+      return result;
+    } finally {
+      clearInterval(intervalId);
+    }
+  }
+  const result = await operation();
+  checkAbort();
+  return result;
+}
+
+export async function withAbortableSequence<T, R>(
+  items: T[],
+  processor: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i++) {
+    checkAbort();
+    results.push(await processor(items[i], i));
+  }
+  return results;
+}
+
+let gracefulShutdownSetup = false;
+
+export function setupGracefulShutdown(): void {
+  if (gracefulShutdownSetup) return;
+  gracefulShutdownSetup = true;
+
+  const handleSignal = (signal: NodeJS.Signals) => {
+    if (shutdownInProgress) return;
+    shutdownInProgress = true;
+    requestAbort(`Operation cancelled (${signal})`);
+
+    void (async () => {
+      for (const handler of [...shutdownHandlers]) {
+        try { await handler(); } catch {}
+      }
+      try {
+         const { releaseAllLocks } = await import("./lock.js");
+         await releaseAllLocks();
+      } catch {}
+      const code = signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 1;
+      process.exit(code);
+    })();
+  };
+
+  process.on("SIGINT", () => handleSignal("SIGINT"));
+  process.on("SIGTERM", () => handleSignal("SIGTERM"));
 }
