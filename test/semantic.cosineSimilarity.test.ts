@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { batchEmbed, cosineSimilarity, embedText, findSemanticDuplicates, ModelLoadProgress, ProgressCallback } from "../src/semantic.js";
+import { batchEmbed, cosineSimilarity, embedText, findSemanticDuplicates, ModelLoadProgress, ProgressCallback, WarmupResult, warmupEmbeddings, isModelCached } from "../src/semantic.js";
 
 describe("semantic: cosineSimilarity", () => {
   test("returns 1 for identical vectors", () => {
@@ -74,5 +74,29 @@ describe("semantic: progress callback types", () => {
     expect(progressEvents).toHaveLength(6);
     expect(progressEvents[0].status).toBe("initiate");
     expect(progressEvents[progressEvents.length - 1].status).toBe("ready");
+  });
+});
+
+describe("semantic: warmup types", () => {
+  test("WarmupResult has expected shape", () => {
+    // Type test - verify the interface is correctly exported
+    const successResult: WarmupResult = { success: true, durationMs: 100 };
+    const failureResult: WarmupResult = { success: false, durationMs: 50, error: "Network error" };
+
+    expect(successResult.success).toBe(true);
+    expect(successResult.durationMs).toBe(100);
+    expect(successResult.error).toBeUndefined();
+
+    expect(failureResult.success).toBe(false);
+    expect(failureResult.durationMs).toBe(50);
+    expect(failureResult.error).toBe("Network error");
+  });
+
+  test("warmupEmbeddings is exported as a function", () => {
+    expect(typeof warmupEmbeddings).toBe("function");
+  });
+
+  test("isModelCached is exported as a function", () => {
+    expect(typeof isModelCached).toBe("function");
   });
 });

@@ -516,3 +516,70 @@ export async function findSemanticDuplicates(
 
   return pairs;
 }
+
+export interface WarmupResult {
+  success: boolean;
+  durationMs: number;
+  error?: string;
+}
+
+/**
+ * Pre-load the embedding model for faster subsequent queries.
+ *
+ * Why warm up:
+ * - First embedding is slow (~500ms model load)
+ * - Subsequent embeddings are fast (~3ms)
+ * - Better UX to load during init than during first query
+ *
+ * When to warm up:
+ * - During cass-memory init (if semantic search enabled)
+ * - Background async (non-blocking)
+ * - Before first context/stats command
+ *
+ * @param options.model - The embedding model to warm up (default: all-MiniLM-L6-v2)
+ * @param options.showProgress - Whether to show progress to stderr (auto-detected)
+ * @returns Promise resolving to warmup result with success/failure and duration
+ */
+export async function warmupEmbeddings(
+  options: { model?: string; showProgress?: boolean } = {}
+): Promise<WarmupResult> {
+  const model = options.model || DEFAULT_EMBEDDING_MODEL;
+  const startTime = Date.now();
+
+  try {
+    // Load the embedder (triggers download if needed, shows progress)
+    const embedder = await getEmbedder(model, {
+      showProgress: options.showProgress,
+    });
+
+    // Run a test embedding to fully initialize the model
+    await embedder("warmup test", { pooling: "mean", normalize: true });
+
+    const durationMs = Date.now() - startTime;
+    return { success: true, durationMs };
+  } catch (error: any) {
+    const durationMs = Date.now() - startTime;
+    return {
+      success: false,
+      durationMs,
+      error: error?.message || String(error),
+    };
+  }
+}
+
+/**
+ * Check if the embedding model is cached and ready for offline use.
+ * Useful for doctor checks and status reporting.
+ */
+export async function isModelCached(model = DEFAULT_EMBEDDING_MODEL): Promise<boolean> {
+  try {
+    const { pipeline } = await import("@xenova/transformers");
+    // Try to load with local_files_only - will fail if not cached
+    await pipeline("feature-extraction", model, {
+      local_files_only: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
