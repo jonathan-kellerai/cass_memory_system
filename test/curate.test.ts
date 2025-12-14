@@ -581,6 +581,26 @@ describe("curatePlaybook", () => {
       expect(antiPattern?.tags).toContain("inverted");
     });
 
+    it("inverts at prune threshold even with slight decay (float tolerance)", () => {
+      const slightlyOld = new Date(Date.now() - 1000).toISOString(); // 1s ago -> decayed values slightly < 1.0
+      const harmfulBullet = createTestBullet({
+        id: "harmful-threshold-epsilon",
+        content: "Always use var for everything",
+        category: "style",
+        harmfulCount: 3,
+        helpfulCount: 0,
+        feedbackEvents: Array(3).fill(null).map(() =>
+          createFeedbackEvent("harmful", { timestamp: slightlyOld })
+        )
+      });
+      const playbook = createTestPlaybook([harmfulBullet]);
+
+      const result = curatePlaybook(playbook, [], config);
+
+      expect(result.inversions).toHaveLength(1);
+      expect(result.inversions[0].originalId).toBe("harmful-threshold-epsilon");
+    });
+
     it("trims leading verbs and adds reason when inverting", () => {
       const now = new Date().toISOString();
       const harmfulBullet = createTestBullet({

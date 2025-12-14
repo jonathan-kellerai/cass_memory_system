@@ -17,7 +17,8 @@ import {
   jaccardSimilarity, 
   generateBulletId, 
   now,
-  log
+  log,
+  tokenize
 } from "./utils.js";
 import { 
   checkForPromotion, 
@@ -63,61 +64,101 @@ function hasMarker(text: string, markers: string[]): boolean {
   return markers.some(m => new RegExp(`\\b${m}\\b`, 'i').test(lower));
 }
 
+// Optimized metadata structure for conflict detection
+interface ConflictMeta {
+  bullet: PlaybookBullet;
+  tokens: Set<string>;
+  neg: boolean;
+  pos: boolean;
+  exc: boolean;
+}
+
+function computeConflictMeta(bullet: PlaybookBullet): ConflictMeta {
+  return {
+    bullet,
+    tokens: new Set(tokenize(bullet.content)),
+    neg: hasMarker(bullet.content, NEGATIVE_MARKERS),
+    pos: hasMarker(bullet.content, POSITIVE_MARKERS),
+    exc: hasMarker(bullet.content, EXCEPTION_MARKERS)
+  };
+}
+
 export function detectConflicts(
   newContent: string,
   existingBullets: PlaybookBullet[]
 ): { id: string; content: string; reason: string }[] {
+  // For tests/legacy calls: compute meta on the fly
+  const meta = existingBullets.map(computeConflictMeta);
+  return detectConflictsWithMeta(newContent, meta);
+}
+
+export function detectConflictsWithMeta(
+  newContent: string,
+  existingMeta: ConflictMeta[]
+): { id: string; content: string; reason: string }[] {
   const conflicts: { id: string; content: string; reason: string }[] = [];
   
   // Pre-check markers in new content once
-  const markersInNew = hasMarker(newContent, ALL_MARKERS);
+  // Optimization: tokenize new content once
+  const newTokens = tokenize(newContent);
+  const newTokenSet = new Set(newTokens);
+  
   const newNeg = hasMarker(newContent, NEGATIVE_MARKERS);
   const newPos = hasMarker(newContent, POSITIVE_MARKERS);
   const newExc = hasMarker(newContent, EXCEPTION_MARKERS);
+  
+  const hasNewMarkers = newNeg || newPos || newExc;
 
-  for (const b of existingBullets) {
-    if (b.deprecated) continue;
+  for (const m of existingMeta) {
+    if (m.bullet.deprecated) continue;
 
-    const overlap = jaccardSimilarity(newContent, b.content);
+    // Optimization: Jaccard using pre-computed token sets
+    if (newTokens.length === 0 || m.tokens.size === 0) continue;
     
-    // Check markers efficiently if overlap is borderline
-    const markersInOld = hasMarker(b.content, ALL_MARKERS);
-    
-    // Optimization: Check overlap first. 
-    // When strong markers are present, allow lower overlap threshold.
-    const hasDirectiveMarkers = markersInNew || markersInOld;
+    // Fast skip based on size difference
+    const maxSize = Math.max(newTokenSet.size, m.tokens.size);
+    const minSize = Math.min(newTokenSet.size, m.tokens.size);
+    // If sizes are too different, Jaccard can't be high. 
+    // intersection <= minSize. union >= maxSize.
+    // Jaccard <= minSize / maxSize.
+    // If minSize / maxSize < 0.1, then Jaccard < 0.1.
+    // We need 0.1 or 0.2 overlap.
+    const hasDirectiveMarkers = hasNewMarkers || m.neg || m.pos || m.exc;
     const minOverlap = hasDirectiveMarkers ? 0.1 : 0.2;
+    
+    if (minSize / maxSize < minOverlap) continue;
+
+    const intersectionSize = [...newTokenSet].filter(x => m.tokens.has(x)).length;
+    const unionSize = new Set([...newTokenSet, ...m.tokens]).size;
+    const overlap = intersectionSize / unionSize;
+    
     if (overlap < minOverlap) continue;
 
-    const oldNeg = hasMarker(b.content, NEGATIVE_MARKERS);
-    const oldPos = hasMarker(b.content, POSITIVE_MARKERS);
-    const oldExc = hasMarker(b.content, EXCEPTION_MARKERS);
-
     // Heuristic 1: Negation conflict (one negative, one affirmative)
-    if (overlap >= minOverlap && newNeg !== oldNeg) {
+    if (overlap >= minOverlap && newNeg !== m.neg) {
       conflicts.push({
-        id: b.id,
-        content: b.content,
+        id: m.bullet.id,
+        content: m.bullet.content,
         reason: "Possible negation conflict (one says do, the other says avoid) with high term overlap"
       });
       continue;
     }
 
     // Heuristic 2: Opposite sentiment (must vs avoid)
-    if (overlap >= minOverlap && ((newPos && oldNeg) || (oldPos && newNeg))) {
+    if (overlap >= minOverlap && ((newPos && m.neg) || (m.pos && newNeg))) {
       conflicts.push({
-        id: b.id,
-        content: b.content,
+        id: m.bullet.id,
+        content: m.bullet.content,
         reason: "Opposite directives (must vs avoid) on similar subject matter"
       });
       continue;
     }
 
     // Heuristic 3: Scope conflict (always vs exception)
-    if (overlap >= minOverlap && ((newPos && oldExc) || (oldPos && newExc))) {
+    if (overlap >= minOverlap && ((newPos && m.exc) || (m.pos && newExc))) {
       conflicts.push({
-        id: b.id,
-        content: b.content,
+        id: m.bullet.id,
+        content: m.bullet.content,
         reason: "Potential scope conflict (always vs exception) on overlapping topic"
       });
       continue;
@@ -194,6 +235,9 @@ export function curatePlaybook(
   const referencePlaybook = contextPlaybook || targetPlaybook;
   const existingHashes = buildHashCache(referencePlaybook);
   
+  // Pre-compute conflict metadata for the reference playbook once
+  const conflictMeta = referencePlaybook.bullets.map(computeConflictMeta);
+  
   const decisionLog: DecisionLogEntry[] = [];
 
   const result: CurationResult = {
@@ -223,7 +267,8 @@ export function curatePlaybook(
         const hash = hashContent(content);
 
         // Conflict detection (warnings only)
-        const conflicts = detectConflicts(content, referencePlaybook.bullets);
+        // Use optimized version with pre-computed meta
+        const conflicts = detectConflictsWithMeta(content, conflictMeta);
         for (const c of conflicts) {
           result.conflicts.push({
             newBulletContent: content,
@@ -458,8 +503,10 @@ export function curatePlaybook(
 
     const { decayedHarmful, decayedHelpful } = getDecayedCounts(bullet, config);
     const pruneThreshold = config.pruneHarmfulThreshold ?? 3;
+    // Use epsilon for floating point comparison robustness
+    const epsilon = 0.01;
 
-    if (decayedHarmful >= pruneThreshold && decayedHarmful > (decayedHelpful * 2)) {
+    if (decayedHarmful >= (pruneThreshold - epsilon) && decayedHarmful > (decayedHelpful * 2)) {
       if (bullet.isNegative) {
         deprecateBullet(targetPlaybook, bullet.id, "Negative rule marked harmful (likely incorrect restriction)");
         result.pruned++;
