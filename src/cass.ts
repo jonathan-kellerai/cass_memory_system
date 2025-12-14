@@ -88,19 +88,151 @@ function joinMessages(entries: any[]): string | null {
   return parts.length ? parts.join("\n") : null;
 }
 
+function parseCassJsonOutput(stdout: string): unknown {
+  // 1) Happy path JSON.parse
+  try {
+    return JSON.parse(stdout);
+  } catch (parseErr) {
+    const tryParseJson = (text: string): unknown | null => {
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    };
+
+    const looksLikeJsonStart = (text: string): boolean => {
+      const t = text.trimStart();
+      if (!t) return false;
+      const first = t[0];
+      if (first !== "[" && first !== "{") return false;
+
+      // Skip common log prefixes like "[INFO]" / "[WARN]" where the next character is a letter.
+      const next = t.slice(1).trimStart()[0];
+      if (!next) return false;
+
+      if (first === "[") {
+        if (next === "{" || next === "[" || next === "]" || next === '"') return true;
+        if (next === "-" || (next >= "0" && next <= "9")) return true;
+        if (next === "t" || next === "f" || next === "n") return true;
+        return false;
+      }
+
+      // "{...}" must start with a string key or be empty.
+      return next === '"' || next === "}";
+    };
+
+    const extractJsonValue = (text: string, start: number): string | null => {
+      const startChar = text[start];
+      if (startChar !== "[" && startChar !== "{") return null;
+
+      let depth = 0;
+      let inString = false;
+      let escaping = false;
+
+      for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+
+        if (inString) {
+          if (escaping) {
+            escaping = false;
+            continue;
+          }
+          if (ch === "\\") {
+            escaping = true;
+            continue;
+          }
+          if (ch === '"') {
+            inString = false;
+            continue;
+          }
+          continue;
+        }
+
+        if (ch === '"') {
+          inString = true;
+          continue;
+        }
+
+        if (ch === "[" || ch === "{") {
+          depth++;
+          continue;
+        }
+        if (ch === "]" || ch === "}") {
+          depth--;
+          if (depth === 0) return text.slice(start, i + 1);
+        }
+      }
+
+      return null;
+    };
+
+    const lines = stdout.split("\n");
+
+    // 2) Leading logs then a JSON array/object (common case)
+    const jsonStartLine = lines.findIndex((line) => looksLikeJsonStart(line));
+    if (jsonStartLine !== -1) {
+      const candidate = lines.slice(jsonStartLine).join("\n");
+      const parsed = tryParseJson(candidate);
+      if (parsed !== null) return parsed;
+    }
+
+    // 3) NDJSON / line-delimited objects/arrays (ignore non-JSON lines)
+    const parsedLines: unknown[] = [];
+    for (const line of lines) {
+      if (!looksLikeJsonStart(line)) continue;
+      const parsed = tryParseJson(line.trim());
+      if (parsed === null) continue;
+      if (Array.isArray(parsed)) parsedLines.push(...parsed);
+      else parsedLines.push(parsed);
+    }
+    if (parsedLines.length > 0) return parsedLines;
+
+    // 4) Inline prefixes like "[INFO] ... [{...}]" (extract first full JSON value)
+    let attempts = 0;
+    const maxAttempts = 50;
+    for (let i = 0; i < stdout.length && attempts < maxAttempts; i++) {
+      const ch = stdout[i];
+      if (ch !== "[" && ch !== "{") continue;
+      if (!looksLikeJsonStart(stdout.slice(i, i + 48))) continue;
+
+      const extracted = extractJsonValue(stdout, i);
+      if (!extracted) continue;
+
+      const parsed = tryParseJson(extracted);
+      attempts++;
+      if (parsed !== null) return parsed;
+    }
+
+    throw parseErr;
+  }
+}
+
 // --- Health & Availability ---
 
 export function cassAvailable(cassPath = "cass", opts: { quiet?: boolean } = {}): boolean {
   const resolved = expandPath(cassPath);
   try {
-    const result = spawnSync(resolved, ["--version"], { stdio: "pipe" });
+    // Add timeout to prevent hanging if the binary is unresponsive.
+    const result = spawnSync(resolved, ["--version"], { stdio: "pipe", timeout: 2000 });
+
     if (result.error) {
-        if (!opts.quiet) console.error("cassAvailable spawn error:", result.error);
-        return false;
+      const code = (result.error as any)?.code;
+      // Treat missing binary quietly when requested.
+      if (!opts.quiet && code !== "ENOENT") {
+        console.error("cassAvailable spawn error:", result.error);
+      }
+      return false;
     }
     if (result.status !== 0) {
-        if (!opts.quiet) console.error("cassAvailable non-zero status:", result.status, result.stderr.toString());
-        return false;
+      if (!opts.quiet) {
+        console.error(
+          "cassAvailable non-zero status:",
+          result.status,
+          result.stderr?.toString()
+        );
+      }
+      return false;
     }
     return true;
   } catch (e) {
@@ -156,7 +288,7 @@ export async function handleCassUnavailable(
 export function cassNeedsIndex(cassPath = "cass"): boolean {
   const resolved = expandPath(cassPath);
   try {
-    const result = spawnSync(resolved, ["health"], { stdio: "pipe" });
+    const result = spawnSync(resolved, ["health"], { stdio: "pipe", timeout: 2000 });
     return result.status !== 0;
   } catch (err: any) {
     return true;
@@ -219,67 +351,13 @@ export async function cassSearch(
   if (options.workspace) args.push("--workspace", options.workspace);
   if (options.fields) args.push("--fields", options.fields.join(","));
 
-  const parseCassOutput = (stdout: string): any => {
-    // 1) Happy path JSON.parse
-    try {
-      return JSON.parse(stdout);
-    } catch (parseErr) {
-      // 2) Slice from first JSON-looking character (handles leading warnings)
-      const firstArray = stdout.indexOf("[");
-      const firstObject = stdout.indexOf("{");
-      const start = [firstArray, firstObject].filter(i => i >= 0).sort((a, b) => a - b)[0];
-      
-      if (start !== undefined) {
-        // Robustness: Try to find the *last* matching closing bracket to handle trailing garbage
-        const isArray = start === firstArray;
-        const lastIndex = stdout.lastIndexOf(isArray ? "]" : "}");
-        
-        if (lastIndex > start) {
-          const slice = stdout.substring(start, lastIndex + 1);
-          try {
-            return JSON.parse(slice);
-          } catch {
-            // Fall through to NDJSON fallback if precise slicing fails
-          }
-        }
-        
-        // Fallback: try slicing to end if precise matching failed
-        const slice = stdout.substring(start);
-        try {
-          return JSON.parse(slice);
-        } catch {
-          // continue to NDJSON fallback
-        }
-      }
-
-      // 3) NDJSON / line-delimited objects (ignore non-JSON lines)
-      const parsedLines: any[] = [];
-      for (const line of stdout.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) continue;
-        try {
-          const val = JSON.parse(trimmed);
-          if (Array.isArray(val)) parsedLines.push(...val);
-          else parsedLines.push(val);
-        } catch {
-          // ignore malformed lines, keep trying others
-        }
-      }
-      if (parsedLines.length > 0) {
-        return parsedLines;
-      }
-
-      throw parseErr;
-    }
-  };
-
   try {
     const { stdout } = await execFileAsync(resolved, args, {
       maxBuffer: 50 * 1024 * 1024,
       timeout: (options.timeout || 30) * 1000
     });
 
-    const rawHits = parseCassOutput(stdout);
+    const rawHits = parseCassJsonOutput(stdout);
 
     // Validate and parse with Zod
     return Array.isArray(rawHits) 
@@ -417,10 +495,15 @@ export async function safeCassSearchWithDegraded(
     // Best-effort fallback: if force flag set, attempt to parse whatever stdout we get.
     if (options.force) {
       try {
-        const alt = spawnSync(resolvedCassPath, ["search", query, "--robot"], { encoding: "utf-8" });
+        const alt = spawnSync(resolvedCassPath, ["search", query, "--robot"], {
+          encoding: "utf-8",
+          maxBuffer: 50 * 1024 * 1024,
+          timeout: (options.timeout || 30) * 1000,
+        });
+        if (alt.error) throw alt.error;
         const text = alt.stdout || "";
         if (text.trim()) {
-          const parsed = JSON.parse(text);
+          const parsed = parseCassJsonOutput(text);
           const hitsArr = Array.isArray(parsed) ? parsed : [parsed];
           return {
             hits: hitsArr.map((hit: any) => ({
@@ -575,7 +658,8 @@ export async function cassExpand(
 export async function cassStats(cassPath = "cass"): Promise<any | null> {
   try {
     const { stdout } = await execFileAsync(cassPath, ["stats", "--json"]);
-    return JSON.parse(stdout);
+    const parsed = parseCassJsonOutput(stdout);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -587,7 +671,10 @@ export async function cassTimeline(
 ): Promise<CassTimelineResult> {
   try {
     const { stdout } = await execFileAsync(cassPath, ["timeline", "--days", days.toString(), "--json"]);
-    return JSON.parse(stdout) as CassTimelineResult;
+    const parsed = parseCassJsonOutput(stdout);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as CassTimelineResult)
+      : { groups: [] };
   } catch {
     return { groups: [] };
   }
