@@ -150,24 +150,20 @@ export async function withLock<T>(
         
         // Safety check: Verify we still own the lock before deleting
         // This prevents deleting a lock that was stolen by another process (due to staleness)
-        let safeToDelete = true;
+        let safeToDelete = false;
         try {
           const content = await fs.readFile(`${lockPath}/pid`, "utf-8");
-          if (content.trim() !== pid) {
-            safeToDelete = false;
+          if (content.trim() === pid) {
+            safeToDelete = true;
+          } else {
             console.warn(`[lock] Lock stolen by PID ${content.trim()}, not deleting: ${lockPath}`);
           }
         } catch {
-          // If we can't read the PID file, it might be gone or corrupted.
-          // Proceed with delete attempt if we created it, or maybe skip?
-          // If we can't read it, and we are the owner, it shouldn't have been deleted.
-          // If it was stolen and deleted/recreated, reading might fail or succeed.
-          // For safety, if we can't verify ownership, we should be cautious.
-          // But 'mkdir' succeeded, so we *did* own it at start.
-          // If we can't read PID, maybe we should still delete if mtime suggests it's ours?
-          // Let's assume strict PID match required if file exists.
-          // If file missing but dir exists? 
-          // Default to deleting if we can't prove it's NOT ours, relying on the fact we created it.
+          // If we can't read the PID file (ENOENT), it implies the lock structure is gone or corrupted.
+          // It's unsafe to delete the directory as it might be a fresh lock from another process 
+          // (extremely narrow race: mkdir -> context switch -> us -> rm).
+          // We default to NOT deleting (safeToDelete = false).
+          // If we leave a zombie directory, the stale lock cleaner will handle it later.
         }
 
         if (safeToDelete) {

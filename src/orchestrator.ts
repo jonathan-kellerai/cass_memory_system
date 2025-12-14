@@ -122,13 +122,13 @@ export async function orchestrateReflection(
           });
 
           // Mark as processed so we don't retry
-          // Note: skipLock because we already hold the outer logPath lock
+          // Note: Removing skipLock to ensure atomic writes to the log file via standard file locking
           await processedLog.append({
             sessionPath,
             processedAt: now(),
             diaryId: diary.id,
             deltasGenerated: 0
-          }, { skipLock: true });
+          });
           continue; 
         }
 
@@ -147,13 +147,13 @@ export async function orchestrateReflection(
           allDeltas.push(...validatedDeltas);
         }
 
-        // Note: skipLock because we already hold the outer logPath lock
+        // Note: Removing skipLock to ensure atomic writes to the log file via standard file locking
         await processedLog.append({
           sessionPath,
           processedAt: now(),
           diaryId: diary.id,
           deltasGenerated: validatedDeltas.length
-        }, { skipLock: true });
+        });
         sessionsProcessed++;
 
         options.onProgress?.({
