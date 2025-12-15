@@ -76,7 +76,7 @@ program.command("mark")
   .argument("<bulletId>", "ID of the rule")
   .option("--helpful", "Mark as helpful")
   .option("--harmful", "Mark as harmful")
-  .option("--reason <text>", "Reason for feedback")
+  .option("--reason <reason>", "Reason: caused_bug|wasted_time|contradicted_requirements|wrong_context|outdated|other")
   .option("--session <path>", "Associated session path")
   .option("--json", "Output JSON")
   .action(async (id: string, opts: any) => await markCommand(id, opts));
