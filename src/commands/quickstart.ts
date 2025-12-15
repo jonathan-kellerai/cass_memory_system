@@ -42,6 +42,33 @@ Run this before starting any non-trivial task. It returns:
 
 The system can learn from sessions automatically **once** reflection is scheduled.
 
+## Solo Users (You're Both Agent AND Operator)
+
+If you're working alone without scheduled reflection:
+
+**Option A: Manual Reflection (Recommended)**
+\`\`\`bash
+# After completing significant work:
+${cli} reflect --days 1 --json
+
+# Weekly maintenance:
+${cli} reflect --days 7 --json
+\`\`\`
+
+**Option B: Agent-Native Onboarding**
+\`\`\`bash
+# Check what sessions need analysis:
+${cli} onboard status --json
+
+# Sample sessions to review:
+${cli} onboard sample --json
+
+# Read a session for rule extraction:
+${cli} onboard read <session-path> --json
+\`\`\`
+
+The system works without scheduled reflection - you just trigger learning manually.
+
 ## Inline Feedback (Optional)
 
 When a rule helps or hurts, leave a comment:
@@ -109,6 +136,18 @@ function getQuickstartJson(cli: string) {
     operatorNote: {
       automation: `Schedule ${cli} reflect --days 7 --json (cron/hook).`,
       health: `Use ${cli} doctor when agents report missing history or degraded mode.`
+    },
+    soloUser: {
+      description: "If you're both agent and operator without scheduled reflection",
+      manualReflection: [
+        `${cli} reflect --days 1 --json  # After significant work`,
+        `${cli} reflect --days 7 --json  # Weekly maintenance`
+      ],
+      onboarding: [
+        `${cli} onboard status --json   # Check progress`,
+        `${cli} onboard sample --json   # Find sessions to analyze`,
+        `${cli} onboard read <path> --json  # Read session for extraction`
+      ]
     },
     inlineFeedbackFormat: {
       helpful: "// [cass: helpful <id>] - reason",
