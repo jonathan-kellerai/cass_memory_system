@@ -6,23 +6,55 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 **Procedural memory for AI coding agents.**
-A system that transforms scattered agent sessions into persistent, cross-agent memory—so every agent learns from every other agent's experience.
+Transforms scattered agent sessions into persistent, cross-agent memory—so every agent learns from every other agent's experience.
 
-> **For Agents**: This system is designed FOR you. See [AGENTS.md Integration](#agentsmd-integration) for the blurb to add to your project.
->
-> **For Operators**: Humans configure and monitor this system; agents consume it. See [Operator Guide](#operator-guide).
+<div align="center">
+
+```bash
+# One-liner install (Linux/macOS)
+curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh \
+  | bash -s -- --easy-mode --verify
+```
+
+</div>
 
 ---
 
-## How Agents Use This System
+## How It Works
 
-### The One Command You Need
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    EPISODIC MEMORY (cass)                           │
+│   Raw session logs from all agents — the "ground truth"             │
+│   Claude Code │ Codex │ Cursor │ Aider │ Gemini │ ChatGPT │ ...    │
+└───────────────────────────┬─────────────────────────────────────────┘
+                            │ cass search
+                            ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    WORKING MEMORY (Diary)                           │
+│   Structured session summaries bridging raw logs to rules           │
+│   accomplishments │ decisions │ challenges │ outcomes               │
+└───────────────────────────┬─────────────────────────────────────────┘
+                            │ reflect + curate (automated)
+                            ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    PROCEDURAL MEMORY (Playbook)                     │
+│   Distilled rules with confidence tracking                          │
+│   Rules │ Anti-patterns │ Feedback │ Decay                          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Every agent's sessions feed the shared memory. A pattern discovered in Cursor **automatically** helps Claude Code on the next session.
+
+---
+
+## For Agents: The One Command You Need
 
 ```bash
 cm context "<your task>" --json
 ```
 
-That's it. Before starting any non-trivial task, run this command. It returns:
+Before starting any non-trivial task, run this command. It returns:
 - **Relevant rules** from the playbook (scored by task relevance)
 - **Historical context** from past sessions (yours and other agents')
 - **Anti-patterns** to avoid (things that have caused problems)
@@ -65,17 +97,11 @@ cm context "fix the authentication timeout bug" --json
 }
 ```
 
-### When to Use It
-
-- **Before starting any non-trivial task**: Get context first
-- **When stuck on a problem**: Check if it's been solved before
-- **When considering an approach**: See if there are warnings against it
-
 ### What NOT to Do
 
 You do NOT need to:
 - Run `cm reflect` (automation handles this)
-- Run `cm mark` for feedback (use inline comments instead—see below)
+- Run `cm mark` for feedback (use inline comments instead)
 - Manually add rules to the playbook
 - Worry about the learning pipeline
 
@@ -83,144 +109,33 @@ The system learns from your sessions automatically. Your job is just to query co
 
 ### Inline Feedback (Optional)
 
-When a rule helps or hurts during your work, you can leave inline feedback:
+When a rule helps or hurts during your work, leave inline feedback:
 
 ```typescript
 // [cass: helpful b-8f3a2c] - this rule saved me from a rabbit hole
-
 // [cass: harmful b-x7k9p1] - this advice was wrong for our use case
 ```
 
-These comments are automatically parsed during reflection and update rule confidence.
-
 ---
 
-## MVP Scope (V1)
+## Installation
 
-V1 is intentionally narrow: **“context on demand”** with **zero setup** and **graceful degradation**.
+### One-Liner (Recommended)
 
-- **Core loop**: `cm context` → work → optional feedback (`cm mark`, inline comments) → `cm reflect`
-- **Local-first**: `~/.cass-memory/` + optional repo overrides in `.cass/`
-- **Safe-by-default**: secret sanitization, cross-agent enrichment is opt-in
-- **Agent integration**: optional MCP server via `cm serve` (`cm_context`, `cm_feedback`, `cm_outcome`)
-
-### V2+ (non-goals for MVP)
-
-These may exist behind flags, but V1 does not require them for “first value”:
-
-- Semantic/embedding-based ranking and other “smart” retrieval
-- Cross-agent learning beyond explicit opt-in
-- Team playbooks, cloud sync, analytics dashboard, IDE plugins, webhooks/API
-
----
-
-## Architecture Overview
-
-### Three-Layer Memory
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    EPISODIC MEMORY (cass)                           │
-│   Raw session logs from all agents — the "ground truth"             │
-│   Claude Code │ Codex │ Cursor │ Aider │ Gemini │ ChatGPT │ ...    │
-└───────────────────────────┬─────────────────────────────────────────┘
-                            │ cass search
-                            ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    WORKING MEMORY (Diary)                           │
-│   Structured session summaries bridging raw logs to rules           │
-│   accomplishments │ decisions │ challenges │ outcomes               │
-└───────────────────────────┬─────────────────────────────────────────┘
-                            │ reflect + curate (automated)
-                            ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    PROCEDURAL MEMORY (Playbook)                     │
-│   Distilled rules with confidence tracking                          │
-│   Rules │ Anti-patterns │ Feedback │ Decay                          │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Cross-Agent Learning
-
-Every agent's sessions feed the shared memory:
-
-```
-Claude Code session    →  ┐
-Cursor session         →  │→  Unified Playbook  →  All agents benefit
-Codex session          →  │
-Aider session          →  ┘
-```
-
-A pattern discovered in Cursor **automatically** helps Claude Code on the next session.
-
-### Confidence Decay
-
-Rules aren't immortal. A rule helpful 8 times in January but never validated since loses confidence over time:
-
-- **90-day half-life**: Confidence halves every 90 days without revalidation
-- **4x harmful multiplier**: One mistake counts 4x as much as one success
-- **Maturity progression**: candidate → established → proven (based on validation count)
-
-### Anti-Pattern Learning
-
-Bad rules don't just get deleted—they become **warnings**:
-
-```
-"Cache auth tokens for performance"
-    ↓ (3 harmful marks)
-"PITFALL: Don't cache auth tokens without expiry validation"
-```
-
----
-
-## AGENTS.md Integration
-
-Add this blurb to your project's `AGENTS.md`:
-
-```markdown
-## Memory System: cass-memory
-
-Before starting complex tasks, retrieve relevant context:
-
+**Linux/macOS:**
 ```bash
-cm context "<task description>" --json
+curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh \
+  | bash -s -- --easy-mode --verify
 ```
 
-This returns:
-- **relevantBullets**: Rules that may help with your task
-- **antiPatterns**: Pitfalls to avoid
-- **historySnippets**: Past sessions that solved similar problems
-- **suggestedCassQueries**: Searches for deeper investigation
+**Direct Downloads:**
+- [Linux x64](https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-linux-x64)
+- [macOS Apple Silicon](https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-macos-arm64)
+- [macOS Intel](https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-macos-x64)
+- [Windows x64](https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-windows-x64.exe)
 
-### Protocol
+### From Source
 
-1. **START**: Run `cm context "<task>" --json` before non-trivial work
-2. **WORK**: Reference rule IDs when following them (e.g., "Following b-8f3a2c, checking token expiry first...")
-3. **FEEDBACK**: Leave inline comments when rules help/hurt:
-   - `// [cass: helpful b-xyz] - reason`
-   - `// [cass: harmful b-xyz] - reason`
-4. **END**: Just finish your work. Learning happens automatically.
-```
-
----
-
-## Operator Guide
-
-This section is for humans who configure and maintain the system.
-
-### Installation
-
-**Prebuilt binaries (recommended)**
-- macOS (Apple Silicon):
-  `curl -L https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-macos-arm64 -o cm && chmod +x cm && sudo mv cm /usr/local/bin/`
-- macOS (Intel):
-  `curl -L https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-macos-x64 -o cm && chmod +x cm && sudo mv cm /usr/local/bin/`
-- Linux (x64):
-  `curl -L https://github.com/Dicklesworthstone/cass_memory_system/releases/latest/download/cass-memory-linux-x64 -o cm && chmod +x cm && sudo mv cm /usr/local/bin/`
-- Windows (x64):
-  Download `cass-memory-windows-x64.exe` from the latest GitHub release and put it somewhere on your `%PATH%`.
-
-**From source (Bun)**
 ```bash
 git clone https://github.com/Dicklesworthstone/cass_memory_system.git
 cd cass_memory_system
@@ -229,17 +144,16 @@ bun run build
 sudo mv ./dist/cass-memory /usr/local/bin/cm
 ```
 
-**Prerequisites**
-- `cass` CLI installed and indexed (for history lookups)
-- LLM API key set in environment (optional, for enhanced reflection)
+### Verify Installation
 
-**Verify install**
 ```bash
 cm --version
 cm doctor --json
 ```
 
-### Initial Setup
+---
+
+## Initial Setup
 
 ```bash
 # Initialize (creates global config and playbook)
@@ -252,13 +166,13 @@ cm starters  # list available starters
 
 ### Automating Reflection
 
-The key to the system is automated reflection. Set up a cron job or hook:
+Set up a cron job or hook:
 
 ```bash
 # Daily reflection on recent sessions
 cm reflect --days 7 --json
 
-# Or via cron (runs at 2am daily)
+# Via cron (runs at 2am daily)
 0 2 * * * /usr/local/bin/cm reflect --days 7 >> ~/.cass-memory/reflect.log 2>&1
 ```
 
@@ -269,16 +183,18 @@ For Claude Code users, add a post-session hook in `.claude/hooks.json`:
 }
 ```
 
-### Commands Reference
+---
 
-**Agent Commands** (designed for AI agents):
+## CLI Reference
+
+### Agent Commands
 
 | Command | Purpose |
 |---------|---------|
 | `cm context "<task>" --json` | Get relevant rules + history for a task |
 | `cm quickstart --json` | Explain the system (self-documentation) |
 
-**Playbook Commands** (inspect and manage rules):
+### Playbook Commands
 
 | Command | Purpose |
 |---------|---------|
@@ -286,54 +202,85 @@ For Claude Code users, add a post-session hook in `.claude/hooks.json`:
 | `cm playbook get <id>` | Get detailed info for a rule |
 | `cm playbook add "<content>"` | Add a new rule |
 | `cm playbook remove <id>` | Deprecate a rule |
-| `cm playbook export` | Export playbook as YAML |
-| `cm playbook import <file>` | Import playbook from file |
-| `cm similar "<query>"` | Find bullets similar to a query (semantic if enabled) |
-| `cm top [N]` | Show N most effective bullets (default 10) |
-| `cm stale --days N` | Find bullets without feedback in N days |
-| `cm why <id>` | Show bullet origin evidence and reasoning |
+| `cm similar "<query>"` | Find bullets similar to a query |
+| `cm top [N]` | Show N most effective bullets |
+| `cm why <id>` | Show bullet origin evidence |
 | `cm stats --json` | Playbook health metrics |
 
-**Learning Commands** (feedback and reflection):
+### Learning Commands
 
 | Command | Purpose |
 |---------|---------|
 | `cm reflect --days N` | Process recent sessions into rules |
-| `cm mark <id> --helpful\|--harmful` | Manual feedback (prefer inline comments) |
+| `cm mark <id> --helpful\|--harmful` | Manual feedback |
 | `cm outcome --status success\|failure\|mixed --rules <ids>` | Record session outcome |
-| `cm outcome-apply` | Apply recorded outcomes to playbook |
 | `cm validate "<rule>"` | Validate a proposed rule against history |
 | `cm forget <id> --reason "<why>"` | Deprecate a rule permanently |
-| `cm undo <id>` | Revert curation decisions (un-deprecate, undo feedback) |
 | `cm audit --days N` | Check sessions for rule violations |
 
-**System Commands** (setup and diagnostics):
+### System Commands
 
 | Command | Purpose |
 |---------|---------|
 | `cm init` | Initialize configuration and playbook |
-| `cm init --starter <name>` | Initialize with a starter playbook |
-| `cm starters` | List available starter playbooks |
 | `cm doctor --fix` | Check system health, optionally fix issues |
 | `cm project --format agents.md` | Export rules for AGENTS.md |
 | `cm usage` | Show LLM cost and usage statistics |
 | `cm serve --port N` | Run MCP server for agent integration |
-| `cm privacy status` | Show cross-agent settings and data flow summary |
-| `cm privacy enable\|disable` | Enable or disable cross-agent enrichment |
+| `cm privacy status` | Show cross-agent settings |
 
-### Configuration
+---
 
-Config lives at `~/.cass-memory/config.json` (global) and `.cass/config.{json,yaml,yml}` (repo).
+## AGENTS.md Integration
 
-**Precedence (highest wins):**
-1. CLI flags
-2. Repo config (`.cass/config.json` preferred over `.yaml`/`.yml` if multiple exist)
-3. Global config (`~/.cass-memory/config.json`)
-4. Schema defaults
+Add this to your project's `AGENTS.md`:
 
-**Security:** Repo config cannot override sensitive paths (`cassPath`, `playbookPath`, `diaryDir`).
+```markdown
+## Memory System: cass-memory
 
-**Environment Variables:**
+Before starting complex tasks, retrieve relevant context:
+
+\`\`\`bash
+cm context "<task description>" --json
+\`\`\`
+
+This returns:
+- **relevantBullets**: Rules that may help with your task
+- **antiPatterns**: Pitfalls to avoid
+- **historySnippets**: Past sessions that solved similar problems
+- **suggestedCassQueries**: Searches for deeper investigation
+
+### Protocol
+
+1. **START**: Run `cm context "<task>" --json` before non-trivial work
+2. **WORK**: Reference rule IDs when following them
+3. **FEEDBACK**: Leave inline comments when rules help/hurt:
+   - `// [cass: helpful b-xyz] - reason`
+   - `// [cass: harmful b-xyz] - reason`
+4. **END**: Just finish your work. Learning happens automatically.
+```
+
+---
+
+## Configuration
+
+Config lives at `~/.cass-memory/config.json` (global) and `.cass/config.json` (repo).
+
+**Precedence:** CLI flags > Repo config > Global config > Defaults
+
+### Key Settings
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `provider` | `"anthropic"` | LLM provider: `anthropic`, `openai`, `google` |
+| `model` | `"claude-sonnet-4-20250514"` | Model for reflection |
+| `budget.dailyLimit` | `0.10` | Max daily LLM spend (USD) |
+| `scoring.decayHalfLifeDays` | `90` | Days for feedback to decay |
+| `scoring.harmfulMultiplier` | `4` | Weight harmful feedback N× more |
+| `maxBulletsInContext` | `50` | Max rules in context |
+| `crossAgent.enabled` | `false` | Enable cross-agent enrichment |
+
+### Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
@@ -341,103 +288,46 @@ Config lives at `~/.cass-memory/config.json` (global) and `.cass/config.{json,ya
 | `OPENAI_API_KEY` | API key for OpenAI |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | API key for Google Gemini |
 
-**LLM Settings:**
+---
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `provider` | string | `"anthropic"` | LLM provider: `anthropic`, `openai`, `google` |
-| `model` | string | `"claude-sonnet-4-20250514"` | Model to use for reflection |
-| `budget.dailyLimit` | number | `0.10` | Max daily LLM spend (USD) |
-| `budget.monthlyLimit` | number | `2.00` | Max monthly LLM spend (USD) |
+## Architecture
 
-**Scoring Settings:**
+### Confidence Decay
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `scoring.decayHalfLifeDays` | number | `90` | Days for feedback to decay to half value |
-| `scoring.harmfulMultiplier` | number | `4` | Weight harmful feedback N× more than helpful |
-| `scoring.minFeedbackForActive` | number | `3` | Min feedback to consider bullet "active" |
-| `scoring.minHelpfulForProven` | number | `10` | Min helpful marks for "proven" status |
-| `scoring.maxHarmfulRatioForProven` | number | `0.1` | Max harmful ratio for "proven" (10%) |
+Rules aren't immortal. A rule helpful 8 times in January but never validated since loses confidence over time:
 
-**Context Settings:**
+- **90-day half-life**: Confidence halves every 90 days without revalidation
+- **4x harmful multiplier**: One mistake counts 4x as much as one success
+- **Maturity progression**: candidate → established → proven
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `maxBulletsInContext` | number | `50` | Max rules to return in context |
-| `maxHistoryInContext` | number | `10` | Max history snippets to return |
-| `sessionLookbackDays` | number | `7` | Days to search for related sessions |
-| `minRelevanceScore` | number | `0.1` | Min relevance to include a bullet |
+### Anti-Pattern Learning
 
-**Behavior Settings:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `autoReflect` | boolean | `false` | Auto-run reflection after sessions |
-| `validationEnabled` | boolean | `true` | Validate new rules against history |
-| `crossAgent.enabled` | boolean | `false` | Enable cross-agent diary enrichment (opt-in) |
-| `crossAgent.consentGiven` | boolean | `false` | Records explicit consent for cross-agent enrichment |
-| `crossAgent.consentDate` | string\|null | `null` | When consent was granted (ISO timestamp) |
-| `crossAgent.agents` | string[] | `[]` | Optional allowlist; empty means “all agents” when enabled |
-| `crossAgent.auditLog` | boolean | `true` | Write local audit events when cross-agent enrichment occurs |
-| `semanticSearchEnabled` | boolean | `false` | Enable embedding-based search |
-| `semanticWeight` | number | `0.6` | Weight of semantic similarity vs keyword relevance (0-1) |
-| `embeddingModel` | string | `Xenova/all-MiniLM-L6-v2` | Embedding model for semantic search (set to `none` to force keyword-only) |
-| `dedupSimilarityThreshold` | number | `0.85` | Threshold for duplicate detection |
-
-**Example config.json:**
-
-```json
-{
-  "provider": "anthropic",
-  "model": "claude-sonnet-4-20250514",
-  "budget": { "dailyLimit": 0.50, "monthlyLimit": 10.00 },
-  "scoring": {
-    "decayHalfLifeDays": 60,
-    "harmfulMultiplier": 5
-  },
-  "maxBulletsInContext": 30,
-  "crossAgent": { "enabled": false }
-}
-```
-
-### Directory Structure
+Bad rules don't just get deleted—they become **warnings**:
 
 ```
-~/.cass-memory/                  # Global (user-level)
-├── config.json                  # User configuration
-├── playbook.yaml                # Personal playbook
-├── diary/                       # Session summaries
-└── outcomes/                    # Session outcomes
-
-.cass/                           # Project-level (in repo)
-├── config.json                  # Project overrides
-├── playbook.yaml                # Project-specific rules
-└── blocked.yaml                 # Anti-patterns to block
+"Cache auth tokens for performance"
+    ↓ (3 harmful marks)
+"PITFALL: Don't cache auth tokens without expiry validation"
 ```
 
-### Privacy & Security
+### Graceful Degradation
 
-- **Local by default**: All data stays on your machine
-- **Secret sanitization**: API keys, tokens, passwords auto-redacted
-- **No telemetry**: Zero network calls except optional LLM
-- **Cross-agent is opt-in**: Must explicitly enable in config
-- **Privacy controls**: Use `cm privacy status|enable|disable` to inspect and manage cross-agent enrichment
+| Condition | Behavior |
+|-----------|----------|
+| No cass | Playbook-only scoring, no history snippets |
+| No playbook | Empty playbook, commands still work |
+| No LLM | Deterministic reflection, no semantic enhancement |
+| Offline | Cached playbook + local diary |
 
 ---
 
-## MCP Server (Advanced)
+## MCP Server
 
 Run cass-memory as an MCP server for programmatic agent integration:
 
 ```bash
 cm serve --port 3001
 ```
-
-**Tools exposed:**
-- `cm_context` — task → rules/history
-- `cm_feedback` — record helpful/harmful
-- `cm_outcome` — log session outcome
 
 **MCP config** (`~/.config/claude/mcp.json`):
 ```json
@@ -453,83 +343,50 @@ cm serve --port 3001
 
 ---
 
-## Technical Reference
-
-### Effective Score Calculation
-
-```typescript
-function getEffectiveScore(bullet: PlaybookBullet): number {
-  const HARMFUL_MULTIPLIER = 4;
-  const HALF_LIFE_DAYS = 90;
-
-  const decayedHelpful = bullet.feedbackEvents
-    .filter(e => e.type === "helpful")
-    .reduce((sum, event) => {
-      const daysAgo = daysSince(event.timestamp);
-      return sum + Math.pow(0.5, daysAgo / HALF_LIFE_DAYS);
-    }, 0);
-
-  const decayedHarmful = bullet.feedbackEvents
-    .filter(e => e.type === "harmful")
-    .reduce((sum, event) => {
-      const daysAgo = daysSince(event.timestamp);
-      return sum + Math.pow(0.5, daysAgo / HALF_LIFE_DAYS);
-    }, 0);
-
-  return decayedHelpful - (HARMFUL_MULTIPLIER * decayedHarmful);
-}
-```
-
-### ACE Pipeline
+## Directory Structure
 
 ```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  GENERATOR   │ ──▶ │  REFLECTOR   │ ──▶ │   CURATOR    │
-│              │     │              │     │              │
-│ Pre-task     │     │ Pattern      │     │ Deterministic│
-│ context      │     │ extraction   │     │ delta merge  │
-└──────────────┘     └──────┬───────┘     └──────────────┘
-                            │
-                            ▼
-                  ┌──────────────────┐
-                  │    VALIDATOR     │
-                  │                  │
-                  │ Evidence check   │
-                  │ against cass     │
-                  └──────────────────┘
+~/.cass-memory/                  # Global (user-level)
+├── config.json                  # User configuration
+├── playbook.yaml                # Personal playbook
+├── diary/                       # Session summaries
+└── outcomes/                    # Session outcomes
+
+.cass/                           # Project-level (in repo)
+├── config.json                  # Project overrides
+├── playbook.yaml                # Project-specific rules
+└── blocked.yaml                 # Anti-patterns to block
 ```
 
-- **Generator**: `cm context` hydrates rules by scoring playbook against task keywords
-- **Reflector**: `cm reflect` extracts patterns from unprocessed sessions
-- **Validator**: Evidence gate against cass history (optional LLM check)
-- **Curator**: Deterministic merge—NO LLM (prevents context collapse)
+---
 
-### Maturity State Machine
+## Privacy & Security
 
+- **Local by default**: All data stays on your machine
+- **Secret sanitization**: API keys, tokens, passwords auto-redacted
+- **No telemetry**: Zero network calls except optional LLM
+- **Cross-agent is opt-in**: Must explicitly enable in config
+
+---
+
+## Troubleshooting
+
+| Error | Solution |
+|-------|----------|
+| `cass not found` | Install from [cass repo](https://github.com/Dicklesworthstone/coding_agent_session_search) |
+| `API key missing` | Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` |
+| `Playbook corrupt` | Run `cm doctor --fix` |
+| `Budget exceeded` | Check `cm usage`, adjust limits in config |
+
+### Recovery
+
+```bash
+# Check system health
+cm doctor --json
+
+# Re-initialize if needed
+cm init --force
 ```
-  ┌──────────┐       ┌─────────────┐    ┌────────┐
-  │ candidate│──────▶│ established │───▶│ proven │
-  └──────────┘       └─────────────┘    └────────┘
-       │                   │                  │
-       │                   │ (harmful >25%)   │
-       │                   ▼                  │
-       │             ┌─────────────┐          │
-       └────────────▶│ deprecated  │◀─────────┘
-                     └─────────────┘
-```
-
-- **candidate → established**: 3+ helpful, low harm ratio
-- **established → proven**: 5+ helpful, very low harm ratio
-- **any → deprecated**: Harmful ratio exceeds 25%
-
-### Graceful Degradation
-
-| Condition | Behavior |
-|-----------|----------|
-| No cass | Playbook-only scoring, no history snippets |
-| No playbook | Empty playbook, commands still work |
-| No LLM | Deterministic reflection, no semantic enhancement |
-| Offline | Cached playbook + local diary |
 
 ---
 
@@ -543,7 +400,7 @@ bun install
 # Dev with hot reload
 bun --watch run src/cm.ts <command>
 
-# Tests (all)
+# Tests
 bun test
 bun run test:watch
 
@@ -552,87 +409,6 @@ bun run typecheck
 
 # Build all platforms
 bun run build:all
-```
-
-### Testing
-
-This repo uses Bun's built-in runner (`bun test`). Tests are organized by intent using filename suffixes and a small set of scripts:
-
-| Category | Naming convention | Run |
-|---------|-------------------|-----|
-| Unit | `*.test.ts` (default) | `bun run test:unit` |
-| Integration | `*.integration.test.ts` and `test/integration/**` | `bun run test:integration` |
-| LLM (mocked) | `llm.mocked.test.ts` (never call real APIs) | `bun run test:unit` |
-| E2E | `*.e2e.test.ts` (full CLI flows) | `bun run test:e2e` |
-| Property | `*.property.test.ts` (fast-check) | `bun run test:property` |
-
-Coverage:
-
-- Target: ~80% lines, 80% functions, 70% branches
-- Run: `bun run test:coverage` (use `bun run test:ci` for longer timeouts)
-
----
-
-## Troubleshooting
-
-### Common Errors
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `cass not found` | cass CLI not installed | Install from [cass repo](https://github.com/Dicklesworthstone/coding_agent_session_search) |
-| `API key missing` | No LLM API key set | Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` environment variable |
-| `Playbook corrupt` | Invalid YAML in playbook | Run `cm doctor --fix` to attempt recovery |
-| `Rate limited` | Too many LLM requests | Wait for retry (exponential backoff is automatic) |
-| `Budget exceeded` | Daily/monthly limit hit | Check `cm usage`, adjust limits in config |
-| `Config invalid` | Malformed config file | Validate JSON/YAML syntax, check schema |
-| `Session not found` | Path doesn't exist | Verify path with `cass sessions` |
-
-### Diagnostic Commands
-
-```bash
-# Check system health
-cm doctor --json
-
-# Verify configuration
-cm doctor --fix
-
-# Check LLM budget status
-cm usage
-
-# List playbook health
-cm stats --json
-```
-
-### Recovery Steps
-
-**Corrupted playbook:**
-```bash
-# 1. Check for backup
-ls ~/.cass-memory/playbook.yaml.backup.*
-
-# 2. Run doctor to diagnose
-cm doctor
-
-# 3. If needed, re-initialize
-cm init --force  # creates backups; add --yes in non-interactive contexts
-```
-
-**Missing API key:**
-```bash
-# For Anthropic (recommended)
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# For OpenAI
-export OPENAI_API_KEY="sk-..."
-
-# Add to shell profile for persistence
-echo 'export ANTHROPIC_API_KEY="..."' >> ~/.zshrc
-```
-
-**LLM-free mode:**
-```bash
-# Run without LLM calls (limited functionality)
-CASS_MEMORY_LLM=none cm context "task" --json
 ```
 
 ---
