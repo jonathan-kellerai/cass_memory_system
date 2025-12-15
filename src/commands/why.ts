@@ -8,7 +8,7 @@ import { loadConfig } from "../config.js";
 import { findDiaryBySession, loadDiary, loadAllDiaries } from "../diary.js";
 import { loadMergedPlaybook, findBullet } from "../playbook.js";
 import { getEffectiveScore } from "../scoring.js";
-import { truncate, printJson, printJsonResult, printJsonError } from "../utils.js";
+import { truncate, printJsonResult, printJsonError } from "../utils.js";
 import { ErrorCode } from "../types.js";
 import { PlaybookBullet, DiaryEntry, Config } from "../types.js";
 import chalk from "chalk";

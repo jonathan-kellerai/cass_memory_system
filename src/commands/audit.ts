@@ -85,14 +85,14 @@ export async function auditCommand(flags: { days?: number; json?: boolean }) {
         console.log("");
       });
     }
-	  } catch (err: any) {
-	    const message = err?.message || String(err);
-	    if (flags.json) {
-	      printJsonError(message, { code: ErrorCode.AUDIT_FAILED });
-	    } else {
-	      logError(`Audit failed: ${message}`);
-	    }
-	    process.exitCode = 1;
-	    return;
-	  }
+  } catch (err: any) {
+    const message = err?.message || String(err);
+    if (flags.json) {
+      printJsonError(message, { code: ErrorCode.AUDIT_FAILED });
+    } else {
+      logError(`Audit failed: ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
 }

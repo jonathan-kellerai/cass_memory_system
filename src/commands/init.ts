@@ -49,9 +49,9 @@ export async function initCommand(options: InitOptions) {
 
   if (alreadyInitialized && !options.force && !options.starter) {
     if (options.json) {
-      printJson({
-        success: false,
-        error: "Already initialized. Use --force to reinitialize."
+      printJsonError("Already initialized. Use --force to reinitialize.", {
+        code: ErrorCode.ALREADY_EXISTS,
+        details: { hint: "Use --force to reinitialize" }
       });
     } else {
       log(chalk.yellow("Already initialized. Use --force to reinitialize."), true);
@@ -78,9 +78,9 @@ export async function initCommand(options: InitOptions) {
       }
     } else if (!options.yes) {
       if (options.json) {
-        printJson({
-          success: false,
-          error: "Refusing to overwrite existing files without --yes"
+        printJsonError("Refusing to overwrite existing files without --yes", {
+          code: ErrorCode.MISSING_REQUIRED,
+          details: { missing: "confirmation", hint: "Use --yes to confirm" }
         });
       } else {
         console.error(chalk.red("Refusing to overwrite existing files without --yes"));
@@ -150,13 +150,14 @@ export async function initCommand(options: InitOptions) {
       starterOutcome = await seedStarter(playbookPath, options.starter);
     } catch (err: any) {
       if (options.json) {
-        printJson({
-          success: false,
-          error: err?.message || "Failed to apply starter"
+        printJsonError(err?.message || "Failed to apply starter", {
+          code: ErrorCode.VALIDATION_FAILED,
+          details: { starter: options.starter }
         });
       } else {
         console.error(chalk.red(err?.message || "Failed to apply starter"));
       }
+      process.exitCode = 1;
       return;
     }
   }
@@ -290,9 +291,9 @@ async function initRepoCommand(options: InitOptions) {
 
   if (alreadyInitialized && !options.force && !options.starter) {
     if (options.json) {
-      printJson({
-        success: false,
-        error: "Repo already has .cass/ directory. Use --force to reinitialize."
+      printJsonError("Repo already has .cass/ directory. Use --force to reinitialize.", {
+        code: ErrorCode.ALREADY_EXISTS,
+        details: { cassDir, hint: "Use --force to reinitialize" }
       });
     } else {
       console.log(chalk.yellow("Repo already has .cass/ directory. Use --force to reinitialize."));
@@ -319,9 +320,9 @@ async function initRepoCommand(options: InitOptions) {
       }
     } else if (!options.yes) {
       if (options.json) {
-        printJson({
-          success: false,
-          error: "Refusing to overwrite existing files without --yes"
+        printJsonError("Refusing to overwrite existing files without --yes", {
+          code: ErrorCode.MISSING_REQUIRED,
+          details: { missing: "confirmation", hint: "Use --yes to confirm" }
         });
       } else {
         console.error(chalk.red("Refusing to overwrite existing files without --yes"));
@@ -359,13 +360,14 @@ async function initRepoCommand(options: InitOptions) {
       starterOutcome = await seedStarter(playbookPath, options.starter);
     } catch (err: any) {
       if (options.json) {
-        printJson({
-          success: false,
-          error: err?.message || "Failed to apply starter"
+        printJsonError(err?.message || "Failed to apply starter", {
+          code: ErrorCode.VALIDATION_FAILED,
+          details: { starter: options.starter, cassDir }
         });
       } else {
         console.error(chalk.red(err?.message || "Failed to apply starter"));
       }
+      process.exitCode = 1;
       return;
     }
   }

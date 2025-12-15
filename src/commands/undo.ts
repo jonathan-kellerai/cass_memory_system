@@ -173,15 +173,16 @@ export async function undoCommand(
   const { playbook, path: playbookPath, location: loc } = location;
 
   // Use withLock for consistent concurrent access safety
-  await withLock(playbookPath, async () => {
-    // Reload inside lock to prevent race conditions
-    const currentPlaybook = await loadPlaybook(playbookPath);
-    const bullet = findBullet(currentPlaybook, bulletId);
+  try {
+    await withLock(playbookPath, async () => {
+      // Reload inside lock to prevent race conditions
+      const currentPlaybook = await loadPlaybook(playbookPath);
+      const bullet = findBullet(currentPlaybook, bulletId);
 
-    if (!bullet) {
-      // Just throw - the CLI error handler will handle printing and exit code
-      throw new Error(`Bullet ${bulletId} not found in ${playbookPath} during write lock.`);
-    }
+      if (!bullet) {
+        // Throw to release lock and propagate error to outer try/catch
+        throw new Error(`Bullet ${bulletId} not found in ${playbookPath} during write lock.`);
+      }
 
     const preview = truncate(bullet.content.trim().replace(/\s+/g, " "), 100);
 
@@ -406,7 +407,17 @@ export async function undoCommand(
     } else {
       printUndoResult(result, bullet);
     }
-  });
+    });
+  } catch (err: any) {
+    const message = err?.message || String(err);
+    if (flags.json) {
+      const code = message.includes("not found") ? ErrorCode.BULLET_NOT_FOUND : ErrorCode.INTERNAL_ERROR;
+      printJsonError(message, { code, details: { bulletId } });
+    } else {
+      console.error(chalk.red(`Error: ${message}`));
+    }
+    process.exitCode = 1;
+  }
 }
 
 function printUndoResult(result: UndoResult, bullet?: PlaybookBullet): void {

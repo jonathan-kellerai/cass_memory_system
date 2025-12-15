@@ -46,61 +46,72 @@ export async function forgetCommand(
     }
   }
 
-  await withLock(savePath, async () => {
-    const playbook = await loadPlaybook(savePath);
-    const bullet = findBullet(playbook, bulletId);
+  try {
+    await withLock(savePath, async () => {
+      const playbook = await loadPlaybook(savePath);
+      const bullet = findBullet(playbook, bulletId);
 
-    if (!bullet) {
-      // Throwing error allows lock to be released
-      throw new Error(`Bullet ${bulletId} not found`);
-    }
-
-    // 1. Add to blocked log
-    const blockedLogPath = savePath === repoPath
-      ? path.join(path.dirname(repoPath!), "blocked.log")
-      : "~/.cass-memory/blocked.log";
-
-    await withLock(blockedLogPath, async () => {
-      await appendBlockedLog({
-        id: bullet.id,
-        content: bullet.content,
-        reason: flags.reason!,
-        forgottenAt: now()
-      }, blockedLogPath);
-    });
-
-    // 2. Invert if requested
-    let antiPatternId: string | undefined;
-    if (flags.invert) {
-      const antiPattern = addBullet(playbook, {
-        content: `AVOID: ${bullet.content}. ${flags.reason}`,
-        category: bullet.category,
-        type: "anti-pattern",
-        isNegative: true,
-        tags: [...bullet.tags, "inverted"]
-      }, "forget-command", config.defaultDecayHalfLife);
-      antiPatternId = antiPattern.id;
-    }
-
-    // 3. Deprecate original
-    // Use dynamic import deprecated/removed or update import
-    const { deprecateBullet } = await import("../playbook.js");
-    deprecateBullet(playbook, bulletId, flags.reason!, antiPatternId);
-
-    await savePlaybook(playbook, savePath);
-
-    if (flags.json) {
-      printJsonResult({
-        bulletId,
-        action: "forgotten",
-        inverted: !!antiPatternId,
-        antiPatternId
-      });
-    } else {
-      console.log(chalk.green(`${icon("success")} Forgot bullet ${bulletId}`));
-      if (antiPatternId) {
-        console.log(chalk.blue(`  Inverted to anti-pattern: ${antiPatternId}`));
+      if (!bullet) {
+        // Throwing error allows lock to be released
+        throw new Error(`Bullet ${bulletId} not found`);
       }
+
+      // 1. Add to blocked log
+      const blockedLogPath = savePath === repoPath
+        ? path.join(path.dirname(repoPath!), "blocked.log")
+        : "~/.cass-memory/blocked.log";
+
+      await withLock(blockedLogPath, async () => {
+        await appendBlockedLog({
+          id: bullet.id,
+          content: bullet.content,
+          reason: flags.reason!,
+          forgottenAt: now()
+        }, blockedLogPath);
+      });
+
+      // 2. Invert if requested
+      let antiPatternId: string | undefined;
+      if (flags.invert) {
+        const antiPattern = addBullet(playbook, {
+          content: `AVOID: ${bullet.content}. ${flags.reason}`,
+          category: bullet.category,
+          type: "anti-pattern",
+          isNegative: true,
+          tags: [...bullet.tags, "inverted"]
+        }, "forget-command", config.defaultDecayHalfLife);
+        antiPatternId = antiPattern.id;
+      }
+
+      // 3. Deprecate original
+      // Use dynamic import deprecated/removed or update import
+      const { deprecateBullet } = await import("../playbook.js");
+      deprecateBullet(playbook, bulletId, flags.reason!, antiPatternId);
+
+      await savePlaybook(playbook, savePath);
+
+      if (flags.json) {
+        printJsonResult({
+          bulletId,
+          action: "forgotten",
+          inverted: !!antiPatternId,
+          antiPatternId
+        });
+      } else {
+        console.log(chalk.green(`${icon("success")} Forgot bullet ${bulletId}`));
+        if (antiPatternId) {
+          console.log(chalk.blue(`  Inverted to anti-pattern: ${antiPatternId}`));
+        }
+      }
+    });
+  } catch (err: any) {
+    const message = err?.message || String(err);
+    if (flags.json) {
+      const code = message.includes("not found") ? ErrorCode.BULLET_NOT_FOUND : ErrorCode.INTERNAL_ERROR;
+      printJsonError(message, { code, details: { bulletId } });
+    } else {
+      logError(message);
     }
-  });
+    process.exitCode = 1;
+  }
 }
