@@ -359,10 +359,18 @@ export async function cassSearch(
 
     const rawHits = parseCassJsonOutput(stdout);
 
+    // Handle wrapper object from cass search --robot (returns { count, hits, ... })
+    let hitsArray: unknown[];
+    if (Array.isArray(rawHits)) {
+      hitsArray = rawHits;
+    } else if (rawHits && typeof rawHits === 'object' && Array.isArray((rawHits as any).hits)) {
+      hitsArray = (rawHits as any).hits;
+    } else {
+      hitsArray = [rawHits];
+    }
+
     // Validate and parse with Zod
-    return Array.isArray(rawHits) 
-      ? rawHits.map((h: any) => CassHitSchema.parse(h))
-      : [CassHitSchema.parse(rawHits)];
+    return hitsArray.map((h: any) => CassHitSchema.parse(h));
 
   } catch (err: any) {
     if (err.code === CASS_EXIT_CODES.NOT_FOUND) return [];

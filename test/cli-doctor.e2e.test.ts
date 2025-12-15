@@ -568,7 +568,11 @@ describe("E2E: CLI doctor command", () => {
 
       const llmCheck = result.checks.find((c: any) => c.category.includes("LLM"));
       expect(llmCheck).toBeDefined();
-      expect(llmCheck.message.toLowerCase()).toContain("provider");
+      // Message format depends on whether API keys are set:
+      // - With keys: "Provider: <name> (ready)" or "Provider: <name> not configured, but..."
+      // - Without keys: "No API keys set (optional - set ANTHROPIC_API_KEY...)"
+      const msg = llmCheck.message.toLowerCase();
+      expect(msg.includes("provider") || msg.includes("api key")).toBe(true);
     });
   });
 
