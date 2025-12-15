@@ -200,7 +200,9 @@ function buildRecommendedActions(params: {
     });
   }
 
-  const globalStorage = params.checks.find((c) => c.item === "Global (~/.cass-memory)");
+  const globalStorage = params.checks.find(
+    (c) => c.category === "Global Storage (~/.cass-memory)" && c.item === "Structure"
+  );
   if (globalStorage?.status === "warn") {
     actions.push({
       label: "Initialize global storage",
@@ -220,7 +222,9 @@ function buildRecommendedActions(params: {
     });
   }
 
-  const repoCheck = params.checks.find((c) => c.item === "Repo (.cass/)");
+  const repoCheck = params.checks.find(
+    (c) => c.category === "Repo .cass/ Structure" && c.item === "Structure"
+  );
   if (repoCheck?.status === "warn") {
     actions.push({
       label: "Initialize repo-level memory (optional)",
@@ -1141,7 +1145,7 @@ export async function doctorCommand(options: {
       console.log(`${formatCheckStatusBadge(check.status)} ${chalk.bold(label)}: ${check.message}`);
 
       if (
-        check.category === "Sanitization" &&
+        check.category === "Sanitization Pattern Health" &&
         check.item === "Pattern Health" &&
         check.details &&
         (check.details as any).builtInMatches
