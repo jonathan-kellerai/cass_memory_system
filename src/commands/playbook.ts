@@ -125,10 +125,167 @@ function detectFormat(content: string, filePath?: string): "yaml" | "json" {
   return "yaml";
 }
 
+/**
+ * Schema for batch add input
+ */
+const BatchRuleSchema = z.object({
+  content: z.string().min(1),
+  category: z.string().optional(),
+});
+
+type BatchRule = z.infer<typeof BatchRuleSchema>;
+
+interface BatchAddResult {
+  success: boolean;
+  added: Array<{ id: string; content: string; category: string }>;
+  failed: Array<{ content: string; error: string }>;
+  summary: { total: number; succeeded: number; failed: number };
+}
+
+/**
+ * Handle batch add from file or stdin
+ */
+async function handleBatchAdd(
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  flags: { file?: string; category?: string }
+): Promise<BatchAddResult> {
+  const result: BatchAddResult = {
+    success: false,
+    added: [],
+    failed: [],
+    summary: { total: 0, succeeded: 0, failed: 0 },
+  };
+
+  // Read input
+  let rawInput: string;
+  try {
+    if (flags.file === "-") {
+      // Read from stdin
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk);
+      }
+      rawInput = Buffer.concat(chunks).toString("utf-8");
+    } else {
+      // Read from file
+      rawInput = await readFile(flags.file!, "utf-8");
+    }
+  } catch (err: any) {
+    result.failed.push({
+      content: `[file: ${flags.file}]`,
+      error: `Failed to read input: ${err.message}`,
+    });
+    result.summary.total = 1;
+    result.summary.failed = 1;
+    return result;
+  }
+
+  // Parse JSON
+  let rules: unknown[];
+  try {
+    const parsed = JSON.parse(rawInput);
+    if (!Array.isArray(parsed)) {
+      throw new Error("Input must be a JSON array");
+    }
+    rules = parsed;
+  } catch (err: any) {
+    result.failed.push({
+      content: "[input]",
+      error: `Invalid JSON: ${err.message}`,
+    });
+    result.summary.total = 1;
+    result.summary.failed = 1;
+    return result;
+  }
+
+  if (rules.length === 0) {
+    result.success = true;
+    return result;
+  }
+
+  result.summary.total = rules.length;
+
+  // Process rules within a single lock
+  await withLock(config.playbookPath, async () => {
+    const { loadPlaybook } = await import("../playbook.js");
+    const playbook = await loadPlaybook(config.playbookPath);
+
+    for (let i = 0; i < rules.length; i++) {
+      const raw = rules[i];
+
+      // Validate schema
+      const validated = BatchRuleSchema.safeParse(raw);
+      if (!validated.success) {
+        const content = typeof raw === "object" && raw !== null && "content" in raw
+          ? String((raw as any).content).slice(0, 50)
+          : `[item ${i}]`;
+        result.failed.push({
+          content,
+          error: validated.error.errors.map(e => e.message).join(", "),
+        });
+        continue;
+      }
+
+      const rule = validated.data;
+
+      // Use per-rule category or fall back to flag category or "general"
+      const category = rule.category || flags.category || "general";
+
+      try {
+        const bullet = addBullet(
+          playbook,
+          {
+            content: rule.content,
+            category,
+            scope: "global",
+            kind: "workflow_rule",
+          },
+          "manual-cli",
+          config.scoring.decayHalfLifeDays
+        );
+
+        result.added.push({
+          id: bullet.id,
+          content: rule.content,
+          category,
+        });
+        result.summary.succeeded++;
+      } catch (err: any) {
+        result.failed.push({
+          content: rule.content.slice(0, 50),
+          error: err.message || "Unknown error",
+        });
+      }
+    }
+
+    // Save if any were added
+    if (result.added.length > 0) {
+      await savePlaybook(playbook, config.playbookPath);
+    }
+  });
+
+  result.summary.failed = result.summary.total - result.summary.succeeded;
+  result.success = result.summary.failed === 0;
+
+  return result;
+}
+
 export async function playbookCommand(
   action: "list" | "add" | "remove" | "get" | "export" | "import",
   args: string[],
-  flags: { category?: string; json?: boolean; hard?: boolean; yes?: boolean; dryRun?: boolean; reason?: string; all?: boolean; replace?: boolean; yaml?: boolean }
+  flags: {
+    category?: string;
+    json?: boolean;
+    hard?: boolean;
+    yes?: boolean;
+    dryRun?: boolean;
+    reason?: string;
+    all?: boolean;
+    replace?: boolean;
+    yaml?: boolean;
+    file?: string;
+    session?: string;
+  }
 ) {
   const config = await loadConfig();
 
@@ -382,6 +539,41 @@ export async function playbookCommand(
   }
 
   if (action === "add") {
+    // Handle batch add via --file
+    if (flags.file) {
+      const result = await handleBatchAdd(config, flags);
+
+      // If --session was provided, update onboarding state
+      if (flags.session && result.summary.succeeded > 0) {
+        const { markSessionProcessed } = await import("../onboard-state.js");
+        await markSessionProcessed(flags.session, result.summary.succeeded);
+      }
+
+      if (flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(chalk.bold("BATCH ADD RESULTS"));
+        console.log("");
+        if (result.added.length > 0) {
+          console.log(chalk.green(`✓ Added ${result.added.length} rules:`));
+          for (const r of result.added) {
+            console.log(chalk.dim(`  ${r.id}: ${truncate(r.content, 60)}`));
+          }
+        }
+        if (result.failed.length > 0) {
+          console.log("");
+          console.log(chalk.red(`✗ Failed ${result.failed.length} rules:`));
+          for (const r of result.failed) {
+            console.log(chalk.dim(`  "${truncate(r.content, 40)}": ${r.error}`));
+          }
+        }
+        console.log("");
+        console.log(chalk.dim(`Summary: ${result.summary.succeeded}/${result.summary.total} succeeded`));
+      }
+      return;
+    }
+
+    // Single rule add (existing behavior)
     const content = args[0];
     if (!content) {
       logError("Content required for add");

@@ -92,11 +92,20 @@ playbook.command("list")
   .action(async (opts: any) => await playbookCommand("list", [], opts));
 
 playbook.command("add")
-  .description("Add a new rule")
-  .argument("<content>", "Rule content")
+  .description("Add a new rule (single or batch via --file)")
+  .argument("[content]", "Rule content (required unless using --file)")
   .option("--category <cat>", "Category", "general")
+  .option("--file <path>", "Batch add from JSON file (use '-' for stdin)")
+  .option("--session <path>", "Session path to track in onboarding progress (with --file)")
   .option("--json", "Output JSON")
-  .action(async (content: string, opts: any) => await playbookCommand("add", [content], opts));
+  .action(async (content: string | undefined, opts: any) => {
+    // If --file is provided, content is optional
+    if (!opts.file && !content) {
+      console.error("Error: content argument required unless using --file");
+      process.exit(1);
+    }
+    await playbookCommand("add", content ? [content] : [], opts);
+  });
 
 playbook.command("remove")
   .description("Remove (deprecate) a rule")
@@ -316,12 +325,22 @@ program.command("outcome-apply")
 // --- Onboard (agent-native guided onboarding) ---
 program.command("onboard")
   .description("Agent-native guided onboarding (no API costs)")
-  .option("--status", "Check onboarding status")
+  .option("--status", "Check onboarding status and progress")
   .option("--sample", "Sample diverse sessions for analysis")
   .option("--read <path>", "Read/export a session for analysis")
   .option("--prompt", "Show extraction instructions for agent")
   .option("--guided", "Show full guided onboarding flow")
   .option("--limit <n>", "Number of sessions to sample", toInt)
+  .option("--mark-done <path>", "Mark a session as processed without extracting rules")
+  .option("--reset", "Reset onboarding progress (start fresh)")
+  .option("--yes", "Confirm reset without prompting")
+  .option("--include-processed", "Include already-processed sessions in --sample")
+  .option("--workspace <path>", "Filter sessions by workspace")
+  .option("--agent <name>", "Filter sessions by agent (claude, cursor, etc)")
+  .option("--days <n>", "Filter sessions to last N days", toInt)
+  .option("--gaps", "Show playbook category gap analysis")
+  .option("--fill-gaps", "With --sample, prioritize sessions for underrepresented categories")
+  .option("--template", "With --read, provide rich contextual output for extraction")
   .option("--json", "Output JSON")
   .action(async (opts: any) => await onboardCommand(opts));
 

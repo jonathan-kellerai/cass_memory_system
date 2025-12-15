@@ -11,8 +11,26 @@ import chalk from "chalk";
 import { loadConfig } from "../config.js";
 import { loadMergedPlaybook } from "../playbook.js";
 import { cassSearch, cassExport, handleCassUnavailable, CassSearchOptions } from "../cass.js";
-import { getCliName, expandPath } from "../utils.js";
+import { getCliName, expandPath, formatRelativeTime } from "../utils.js";
 import { formatKv, formatRule, getOutputStyle } from "../output.js";
+import {
+  loadOnboardState,
+  markSessionProcessed,
+  resetOnboardState,
+  getOnboardProgress,
+  filterUnprocessedSessions,
+  OnboardProgress,
+} from "../onboard-state.js";
+import {
+  analyzePlaybookGaps,
+  getGapSearchQueries,
+  scoreSessionForGaps,
+  detectCategories,
+  RULE_CATEGORIES as GAP_RULE_CATEGORIES,
+  type PlaybookGapAnalysis,
+  type RuleCategory,
+} from "../gap-analysis.js";
+import { findSimilarBulletsSemantic } from "../semantic.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 
@@ -32,16 +50,22 @@ interface SessionSample {
   workspace: string;
   snippet: string;
   score: number;
+  gapScore?: number;
+  matchedCategories?: string[];
+  gapReason?: string;
 }
 
 interface OnboardJsonOutput {
   status: OnboardStatus;
+  progress?: OnboardProgress;
   step?: string;
   sessions?: SessionSample[];
+  sessionsRemaining?: number;
   sessionContent?: string;
   extractionPrompt?: string;
   categories?: string[];
   examples?: { rule: string; category: string }[];
+  gapAnalysis?: PlaybookGapAnalysis;
 }
 
 const RULE_CATEGORIES = [
@@ -115,38 +139,87 @@ async function getOnboardStatus(): Promise<OnboardStatus> {
   };
 }
 
-async function sampleDiverseSessions(limit: number = 10): Promise<SessionSample[]> {
+interface SampleOptions {
+  limit?: number;
+  includeProcessed?: boolean;
+  workspace?: string;
+  agent?: string;
+  days?: number;
+  fillGaps?: boolean;
+  gapAnalysis?: PlaybookGapAnalysis;
+}
+
+async function sampleDiverseSessions(options: SampleOptions = {}): Promise<{
+  sessions: SessionSample[];
+  totalFound: number;
+  filtered: number;
+}> {
   const config = await loadConfig();
-  const queries = [
-    "fix bug error",
-    "implement feature",
-    "refactor",
-    "test",
-    "documentation",
-    "authentication",
-    "database",
-    "API",
-    "performance",
-    "debugging",
-  ];
+  const limit = options.limit ?? 10;
+  const days = options.days ?? 90;
+
+  // Use gap-targeted queries if fillGaps is true and we have gap analysis
+  let queries: string[];
+  if (options.fillGaps && options.gapAnalysis) {
+    queries = getGapSearchQueries(options.gapAnalysis);
+    // Fall back to default queries if no gaps
+    if (queries.length === 0) {
+      queries = [
+        "fix bug error",
+        "implement feature",
+        "refactor",
+        "test",
+        "documentation",
+      ];
+    }
+  } else {
+    queries = [
+      "fix bug error",
+      "implement feature",
+      "refactor",
+      "test",
+      "documentation",
+      "authentication",
+      "database",
+      "API",
+      "performance",
+      "debugging",
+    ];
+  }
 
   const sessions: Map<string, SessionSample> = new Map();
 
   for (const query of queries) {
-    if (sessions.size >= limit) break;
+    // Fetch more than needed to account for filtering
+    if (sessions.size >= limit * 2) break;
 
     try {
-      const hits = await cassSearch(query, { limit: 3, days: 90 }, config.cassPath);
+      const searchOpts: CassSearchOptions = {
+        limit: 5,
+        days,
+        workspace: options.workspace,
+        agent: options.agent,
+      };
+      const hits = await cassSearch(query, searchOpts, config.cassPath);
       for (const hit of hits) {
-        if (sessions.size >= limit) break;
         if (!sessions.has(hit.source_path)) {
-          sessions.set(hit.source_path, {
+          const session: SessionSample = {
             path: hit.source_path,
             agent: hit.agent,
             workspace: hit.workspace || path.dirname(hit.source_path),
             snippet: hit.snippet,
-            score: hit.score,
-          });
+            score: hit.score ?? 0,
+          };
+
+          // Score against gaps if analysis is provided
+          if (options.gapAnalysis) {
+            const gapResult = scoreSessionForGaps(hit.snippet, options.gapAnalysis);
+            session.gapScore = gapResult.score;
+            session.matchedCategories = gapResult.matchedCategories;
+            session.gapReason = gapResult.reason;
+          }
+
+          sessions.set(hit.source_path, session);
         }
       }
     } catch {
@@ -154,7 +227,28 @@ async function sampleDiverseSessions(limit: number = 10): Promise<SessionSample[
     }
   }
 
-  return Array.from(sessions.values());
+  let allSessions = Array.from(sessions.values());
+  const totalFound = allSessions.length;
+
+  // Filter out already-processed sessions unless includeProcessed is true
+  if (!options.includeProcessed) {
+    const state = await loadOnboardState();
+    allSessions = filterUnprocessedSessions(allSessions, state);
+  }
+
+  // Sort by gap score if available (higher scores first)
+  if (options.fillGaps && options.gapAnalysis) {
+    allSessions.sort((a, b) => (b.gapScore ?? 0) - (a.gapScore ?? 0));
+  }
+
+  const filtered = totalFound - allSessions.length;
+
+  // Return up to limit sessions
+  return {
+    sessions: allSessions.slice(0, limit),
+    totalFound,
+    filtered,
+  };
 }
 
 async function exportSessionForAgent(sessionPath: string): Promise<string | null> {
@@ -164,6 +258,44 @@ async function exportSessionForAgent(sessionPath: string): Promise<string | null
   } catch {
     return null;
   }
+}
+
+/**
+ * Generate a suggested focus message based on gaps and detected topics
+ */
+function generateSuggestedFocus(
+  gapAnalysis: PlaybookGapAnalysis,
+  topicHints: RuleCategory[]
+): string {
+  const parts: string[] = [];
+
+  // Check for overlap between detected topics and gaps
+  const criticalOverlap = topicHints.filter(t => gapAnalysis.gaps.critical.includes(t));
+  const underrepOverlap = topicHints.filter(t => gapAnalysis.gaps.underrepresented.includes(t));
+
+  if (criticalOverlap.length > 0) {
+    parts.push(`This session may contain ${criticalOverlap.join(", ")} patterns - you have NO rules in these areas!`);
+  }
+
+  if (underrepOverlap.length > 0) {
+    parts.push(`Look for ${underrepOverlap.join(", ")} insights - these categories need more rules.`);
+  }
+
+  if (parts.length === 0) {
+    // No gap overlap, give general guidance based on topics
+    if (topicHints.length > 0) {
+      parts.push(`Focus on extracting ${topicHints.slice(0, 2).join(" and ")} patterns from this session.`);
+    } else {
+      parts.push("Look for debugging strategies, workflow insights, or tool-specific knowledge.");
+    }
+  }
+
+  // Add general gaps if we have room
+  if (gapAnalysis.gaps.critical.length > 0 && criticalOverlap.length === 0) {
+    parts.push(`Also note: you have NO rules for ${gapAnalysis.gaps.critical.slice(0, 3).join(", ")}.`);
+  }
+
+  return parts.join(" ");
 }
 
 function getExtractionPrompt(): string {
@@ -304,15 +436,137 @@ export async function onboardCommand(
     prompt?: boolean;
     guided?: boolean;
     limit?: number;
+    markDone?: string;
+    reset?: boolean;
+    yes?: boolean;
+    includeProcessed?: boolean;
+    workspace?: string;
+    agent?: string;
+    days?: number;
+    fillGaps?: boolean;
+    gaps?: boolean;
+    template?: boolean;
   } = {}
 ): Promise<void> {
   const cli = getCliName();
+
+  // Handle --reset first (destructive operation)
+  if (options.reset) {
+    if (!options.yes && !options.json && process.stdin.isTTY) {
+      // Interactive confirmation
+      const readline = await import("node:readline");
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+      const answer = await new Promise<string>((resolve) => {
+        rl.question(chalk.yellow("Reset onboarding progress? This cannot be undone. [y/N] "), resolve);
+      });
+      rl.close();
+      if (answer.toLowerCase() !== "y") {
+        console.log(chalk.dim("Cancelled."));
+        return;
+      }
+    }
+    await resetOnboardState();
+    if (options.json) {
+      console.log(JSON.stringify({ success: true, message: "Onboarding progress reset" }));
+    } else {
+      console.log(chalk.green("✓ Onboarding progress reset"));
+    }
+    return;
+  }
+
+  // Handle --mark-done
+  if (options.markDone) {
+    const sessionPath = options.markDone;
+    await markSessionProcessed(sessionPath, 0, { skipped: true });
+    if (options.json) {
+      console.log(JSON.stringify({
+        success: true,
+        message: "Session marked as processed",
+        sessionPath,
+        rulesExtracted: 0,
+        skipped: true,
+      }));
+    } else {
+      console.log(chalk.green(`✓ Marked as processed: ${sessionPath}`));
+      console.log(chalk.dim("  (0 rules extracted - session skipped)"));
+    }
+    return;
+  }
+
   const status = await getOnboardStatus();
+  const progress = await getOnboardProgress();
+
+  // Load gap analysis if needed
+  const config = await loadConfig();
+  const playbook = await loadMergedPlaybook(config);
+  const gapAnalysis = analyzePlaybookGaps(playbook);
+
+  // Gap analysis standalone view
+  if (options.gaps) {
+    if (options.json) {
+      console.log(JSON.stringify({ status, progress, gapAnalysis }, null, 2));
+    } else {
+      const maxWidth = Math.min(getOutputStyle().width, 84);
+      console.log(chalk.bold("PLAYBOOK GAP ANALYSIS"));
+      console.log(chalk.dim(formatRule("─", { maxWidth })));
+      console.log(chalk.dim(`Total rules: ${gapAnalysis.totalRules}`));
+      console.log("");
+
+      // Show critical gaps
+      if (gapAnalysis.gaps.critical.length > 0) {
+        console.log(chalk.red.bold("CRITICAL (0 rules):"));
+        for (const cat of gapAnalysis.gaps.critical) {
+          console.log(chalk.red(`  ✗ ${cat}`));
+        }
+        console.log("");
+      }
+
+      // Show underrepresented
+      if (gapAnalysis.gaps.underrepresented.length > 0) {
+        console.log(chalk.yellow.bold("UNDERREPRESENTED (1-2 rules):"));
+        for (const cat of gapAnalysis.gaps.underrepresented) {
+          const count = gapAnalysis.byCategory[cat].count;
+          console.log(chalk.yellow(`  ⚠ ${cat} (${count} rules)`));
+        }
+        console.log("");
+      }
+
+      // Show well-covered
+      if (gapAnalysis.wellCovered.length > 0) {
+        console.log(chalk.green.bold("WELL-COVERED (11+ rules):"));
+        for (const cat of gapAnalysis.wellCovered) {
+          const count = gapAnalysis.byCategory[cat].count;
+          console.log(chalk.green(`  ✓ ${cat} (${count} rules)`));
+        }
+        console.log("");
+      }
+
+      // Show category breakdown
+      console.log(chalk.bold("CATEGORY BREAKDOWN:"));
+      for (const cat of GAP_RULE_CATEGORIES) {
+        const analysis = gapAnalysis.byCategory[cat];
+        const bar = "█".repeat(Math.min(20, analysis.count)) + "░".repeat(Math.max(0, 20 - analysis.count));
+        const statusColor = analysis.status === "critical" ? chalk.red
+          : analysis.status === "underrepresented" ? chalk.yellow
+          : analysis.status === "adequate" ? chalk.blue
+          : chalk.green;
+        console.log(`  ${cat.padEnd(15)} ${statusColor(bar)} ${analysis.count}`);
+      }
+
+      console.log("");
+      console.log(chalk.yellow(gapAnalysis.suggestions));
+      console.log(chalk.dim(`\nTo sample sessions that fill gaps: ${cli} onboard --sample --fill-gaps`));
+    }
+    return;
+  }
 
   // Status check
   if (options.status) {
     if (options.json) {
-      console.log(JSON.stringify({ status }, null, 2));
+      console.log(JSON.stringify({ status, progress, gapAnalysis }, null, 2));
     } else {
       const maxWidth = Math.min(getOutputStyle().width, 84);
       console.log(chalk.bold("ONBOARDING STATUS"));
@@ -324,6 +578,35 @@ export async function onboardCommand(
           { key: "Needs onboarding", value: status.needsOnboarding ? "yes" : "no" },
         ], { indent: "  ", width: maxWidth })
       );
+
+      // Show progress if we have any
+      if (progress.hasStarted) {
+        console.log("");
+        console.log(chalk.bold("PROGRESS"));
+        console.log(chalk.dim(formatRule("─", { maxWidth })));
+        console.log(
+          formatKv([
+            { key: "Sessions analyzed", value: String(progress.sessionsProcessed) },
+            { key: "Rules extracted", value: String(progress.rulesExtracted) },
+            { key: "Started", value: progress.startedAt ? formatRelativeTime(progress.startedAt) : "never" },
+            { key: "Last activity", value: progress.lastActivity ? formatRelativeTime(progress.lastActivity) : "never" },
+          ], { indent: "  ", width: maxWidth })
+        );
+      }
+
+      // Show gap summary
+      if (gapAnalysis.gaps.critical.length > 0 || gapAnalysis.gaps.underrepresented.length > 0) {
+        console.log("");
+        console.log(chalk.bold("GAPS"));
+        console.log(chalk.dim(formatRule("─", { maxWidth })));
+        if (gapAnalysis.gaps.critical.length > 0) {
+          console.log(chalk.red(`  Critical: ${gapAnalysis.gaps.critical.join(", ")}`));
+        }
+        if (gapAnalysis.gaps.underrepresented.length > 0) {
+          console.log(chalk.yellow(`  Low: ${gapAnalysis.gaps.underrepresented.join(", ")}`));
+        }
+      }
+
       console.log("");
       console.log(chalk.yellow(status.recommendation));
     }
@@ -332,19 +615,59 @@ export async function onboardCommand(
 
   // Sample sessions
   if (options.sample) {
-    const sessions = await sampleDiverseSessions(options.limit || 10);
+    const { sessions, totalFound, filtered } = await sampleDiverseSessions({
+      limit: options.limit,
+      includeProcessed: options.includeProcessed,
+      workspace: options.workspace,
+      agent: options.agent,
+      days: options.days,
+      fillGaps: options.fillGaps,
+      gapAnalysis: options.fillGaps ? gapAnalysis : undefined,
+    });
+
     if (options.json) {
-      console.log(JSON.stringify({ status, step: "sample", sessions }, null, 2));
+      console.log(JSON.stringify({
+        status,
+        progress,
+        step: "sample",
+        sessions,
+        totalFound,
+        filtered,
+        sessionsRemaining: sessions.length,
+        gapAnalysis: options.fillGaps ? gapAnalysis : undefined,
+      }, null, 2));
     } else {
-      console.log(chalk.bold("SAMPLED SESSIONS FOR ANALYSIS"));
-      console.log("");
-      for (const s of sessions) {
-        console.log(chalk.cyan(`[${s.agent}] ${path.basename(s.workspace)}`));
-        console.log(chalk.dim(`  ${s.path}`));
-        console.log(chalk.gray(`  "${s.snippet.slice(0, 80)}..."`));
-        console.log("");
+      const title = options.fillGaps
+        ? "SAMPLED SESSIONS FOR GAP-FILLING"
+        : "SAMPLED SESSIONS FOR ANALYSIS";
+      console.log(chalk.bold(title));
+      if (options.fillGaps) {
+        console.log(chalk.dim(`(prioritized for: ${gapAnalysis.gaps.critical.concat(gapAnalysis.gaps.underrepresented).slice(0, 3).join(", ")})`));
       }
-      console.log(chalk.dim(`\nTo read a session: ${cli} onboard --read <path>`));
+      if (filtered > 0) {
+        console.log(chalk.dim(`(${filtered} already-processed sessions filtered out)`));
+      }
+      console.log("");
+
+      if (sessions.length === 0) {
+        console.log(chalk.yellow("No unprocessed sessions found."));
+        if (progress.sessionsProcessed > 0) {
+          console.log(chalk.dim(`You've analyzed ${progress.sessionsProcessed} sessions so far.`));
+          console.log(chalk.dim(`Use --include-processed to see all sessions, or --reset to start over.`));
+        }
+      } else {
+        for (const s of sessions) {
+          console.log(chalk.cyan(`[${s.agent}] ${path.basename(s.workspace)}`));
+          console.log(chalk.dim(`  ${s.path}`));
+          if (options.fillGaps && s.gapScore !== undefined && s.gapScore > 0) {
+            const cats = s.matchedCategories?.join(", ") || "";
+            console.log(chalk.magenta(`  Gap score: ${s.gapScore} (${cats})`));
+          }
+          console.log(chalk.gray(`  "${s.snippet.slice(0, 80)}..."`));
+          console.log("");
+        }
+        console.log(chalk.dim(`\nTo read a session: ${cli} onboard --read <path>`));
+      }
     }
     return;
   }
@@ -352,6 +675,136 @@ export async function onboardCommand(
   // Read session
   if (options.read) {
     const content = await exportSessionForAgent(options.read);
+
+    // Template mode: provide rich contextual output for agent extraction
+    if (options.template) {
+      if (!content) {
+        if (options.json) {
+          console.log(JSON.stringify({ error: "Failed to read session", sessionPath: options.read }));
+        } else {
+          console.error(chalk.red(`Failed to read session: ${options.read}`));
+        }
+        return;
+      }
+
+      // Extract metadata from session content
+      const lines = content.split("\n");
+      const messageCount = lines.filter(l => l.trim().length > 0).length;
+
+      // Detect topics from session content (first ~5000 chars)
+      const contentSnippet = content.slice(0, 5000);
+      const topicHints = detectCategories(contentSnippet);
+
+      // Find related rules using semantic search (if enabled)
+      let relatedRules: Array<{ id: string; content: string; similarity: number }> = [];
+      const activeBullets = playbook.bullets.filter(b => b.state !== "retired" && !b.deprecated);
+      if (config.semanticSearchEnabled && activeBullets.length > 0) {
+        try {
+          const matches = await findSimilarBulletsSemantic(
+            contentSnippet,
+            activeBullets,
+            5,
+            { model: config.embeddingModel }
+          );
+          relatedRules = matches
+            .filter(m => m.similarity >= 0.3)
+            .map(m => ({
+              id: m.bullet.id,
+              content: m.bullet.content,
+              similarity: Math.round(m.similarity * 100) / 100,
+            }));
+        } catch {
+          // Ignore semantic search errors
+        }
+      }
+
+      // Generate suggested focus based on gaps and topics
+      const suggestedFocus = generateSuggestedFocus(gapAnalysis, topicHints);
+
+      // Parse workspace from session path
+      const sessionDir = path.dirname(options.read);
+      const workspaceName = path.basename(sessionDir);
+
+      const templateOutput = {
+        metadata: {
+          path: options.read,
+          agent: "unknown", // Would need to parse from content
+          workspace: sessionDir,
+          workspaceName,
+          messageCount,
+          topicHints,
+        },
+        context: {
+          relatedRules,
+          playbookGaps: {
+            critical: gapAnalysis.gaps.critical,
+            underrepresented: gapAnalysis.gaps.underrepresented,
+          },
+          suggestedFocus,
+        },
+        extractionFormat: {
+          schema: { content: "string", category: "string" },
+          categories: RULE_CATEGORIES,
+          examples: EXAMPLE_RULES,
+        },
+        sessionContent: content,
+      };
+
+      if (options.json) {
+        console.log(JSON.stringify(templateOutput, null, 2));
+      } else {
+        console.log(chalk.bold("SESSION ANALYSIS TEMPLATE"));
+        console.log(chalk.dim(formatRule("─", { maxWidth: 60 })));
+        console.log("");
+
+        // Metadata
+        console.log(chalk.bold("METADATA"));
+        console.log(`  Path: ${options.read}`);
+        console.log(`  Workspace: ${workspaceName}`);
+        console.log(`  Messages: ~${messageCount}`);
+        if (topicHints.length > 0) {
+          console.log(`  Topics: ${topicHints.join(", ")}`);
+        }
+        console.log("");
+
+        // Context
+        console.log(chalk.bold("CONTEXT"));
+        if (gapAnalysis.gaps.critical.length > 0) {
+          console.log(chalk.red(`  Critical gaps: ${gapAnalysis.gaps.critical.join(", ")}`));
+        }
+        if (gapAnalysis.gaps.underrepresented.length > 0) {
+          console.log(chalk.yellow(`  Low coverage: ${gapAnalysis.gaps.underrepresented.join(", ")}`));
+        }
+        if (relatedRules.length > 0) {
+          console.log(chalk.cyan("  Related rules:"));
+          for (const r of relatedRules.slice(0, 3)) {
+            console.log(chalk.dim(`    • "${r.content.slice(0, 60)}..." (${Math.round(r.similarity * 100)}%)`));
+          }
+        }
+        console.log("");
+
+        // Suggested focus
+        console.log(chalk.bold("SUGGESTED FOCUS"));
+        console.log(chalk.yellow(`  ${suggestedFocus}`));
+        console.log("");
+
+        // Session content
+        console.log(chalk.bold("SESSION CONTENT"));
+        console.log(chalk.dim("─".repeat(60)));
+        console.log(content);
+        console.log(chalk.dim("─".repeat(60)));
+        console.log("");
+
+        // Instructions
+        console.log(chalk.bold("EXTRACTION INSTRUCTIONS"));
+        console.log(chalk.dim("After analyzing, add rules using:"));
+        console.log(chalk.cyan(`  ${cli} playbook add "Your rule" --category "category"`));
+        console.log(chalk.dim(`Or batch add via: ${cli} playbook add --file rules.json`));
+      }
+      return;
+    }
+
+    // Standard read (non-template)
     if (options.json) {
       console.log(JSON.stringify({
         status,
@@ -371,6 +824,7 @@ export async function onboardCommand(
         console.log(chalk.cyan(`  ${cli} playbook add "Your rule" --category "category"`));
         console.log("");
         console.log(chalk.dim(`For extraction guidance: ${cli} onboard --prompt`));
+        console.log(chalk.dim(`For rich context: ${cli} onboard --read <path> --template`));
       } else {
         console.error(chalk.red(`Failed to read session: ${options.read}`));
       }
