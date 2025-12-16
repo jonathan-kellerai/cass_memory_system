@@ -161,6 +161,7 @@ async function tryRemoveAbandonedLock(lockPath: string): Promise<boolean> {
   try {
     const pidRaw = await fs.readFile(`${lockPath}/pid`, "utf-8");
     const pid = Number.parseInt(pidRaw.trim(), 10);
+    if (!Number.isFinite(pid) || pid <= 0) return false;
     if (pidIsRunning(pid)) return false;
 
     if (!(await safeRemoveLockDir(lockPath, { expectedPid: pidRaw.trim() }))) return false;

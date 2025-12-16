@@ -151,30 +151,40 @@ describe("withLock - Lock Contention", () => {
       await writeFile(targetPath, "0");
 
       const results: number[] = [];
+      const intervals: { id: number; start: number; end: number }[] = [];
+
+      // Use explicit options to ensure reliability under load
+      const lockOptions = { retries: 50, delay: 50 };
 
       // Start 3 concurrent operations
       await Promise.all([
         withLock(targetPath, async () => {
+          const start = Date.now();
           const val = parseInt(await readFile(targetPath, "utf-8"), 10);
-          await new Promise((r) => setTimeout(r, 50)); // Simulate work
+          await new Promise((r) => setTimeout(r, 30)); // Simulate work
           await writeFile(targetPath, (val + 1).toString());
           results.push(1);
+          intervals.push({ id: 1, start, end: Date.now() });
           return null;
-        }),
+        }, lockOptions),
         withLock(targetPath, async () => {
+          const start = Date.now();
           const val = parseInt(await readFile(targetPath, "utf-8"), 10);
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 30));
           await writeFile(targetPath, (val + 1).toString());
           results.push(2);
+          intervals.push({ id: 2, start, end: Date.now() });
           return null;
-        }),
+        }, lockOptions),
         withLock(targetPath, async () => {
+          const start = Date.now();
           const val = parseInt(await readFile(targetPath, "utf-8"), 10);
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 30));
           await writeFile(targetPath, (val + 1).toString());
           results.push(3);
+          intervals.push({ id: 3, start, end: Date.now() });
           return null;
-        }),
+        }, lockOptions),
       ]);
 
       // All 3 should have executed (serialized)
@@ -183,6 +193,13 @@ describe("withLock - Lock Contention", () => {
       // Final value should be 3 (each incremented once)
       const finalVal = await readFile(targetPath, "utf-8");
       expect(finalVal).toBe("3");
+
+      // Verify serialization: no two operations should have overlapping intervals
+      // (start of one should be >= end of another for proper serialization)
+      intervals.sort((a, b) => a.start - b.start);
+      for (let i = 1; i < intervals.length; i++) {
+        expect(intervals[i].start).toBeGreaterThanOrEqual(intervals[i - 1].end);
+      }
     });
   });
 
