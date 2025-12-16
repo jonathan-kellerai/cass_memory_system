@@ -61,29 +61,41 @@ export async function evidenceCountGate(
   config: Config
 ): Promise<EvidenceGateResult> {
   const keywords = extractKeywords(content);
+  if (keywords.length === 0) {
+    return {
+      passed: true,
+      reason: "No meaningful keywords found for evidence search. Proposing as draft.",
+      suggestedState: "draft",
+      sessionCount: 0,
+      successCount: 0,
+      failureCount: 0
+    };
+  }
+
   const hits = await safeCassSearch(keywords.join(" "), {
     limit: 20,
     days: config.validationLookbackDays
   }, config.cassPath, config);
 
-  let successCount = 0;
-  let failureCount = 0;
   const sessions = new Set<string>();
+  const successSessions = new Set<string>();
+  const failureSessions = new Set<string>();
 
   for (const hit of hits) {
     if (!hit.source_path) continue;
-    sessions.add(hit.source_path);
+    const sessionPath = hit.source_path;
+    sessions.add(sessionPath);
 
     const snippet = hit.snippet;
     // Use word-boundary aware patterns to reduce false positives
-    if (matchesPatterns(snippet, SUCCESS_PATTERNS)) {
-      successCount++;
-    } else if (matchesPatterns(snippet, FAILURE_PATTERNS)) {
-      failureCount++;
-    }
+    if (matchesPatterns(snippet, SUCCESS_PATTERNS)) successSessions.add(sessionPath);
+    if (matchesPatterns(snippet, FAILURE_PATTERNS)) failureSessions.add(sessionPath);
   }
 
   const sessionCount = sessions.size;
+  // Count sessions (not individual hits) to avoid overweighting a single session with many matches.
+  const successCount = successSessions.size;
+  const failureCount = failureSessions.size;
 
   if (sessionCount === 0) {
     return {
@@ -97,7 +109,7 @@ export async function evidenceCountGate(
   if (successCount >= 5 && failureCount === 0) {
     return {
       passed: true,
-      reason: `Strong success signal (${successCount} successes). Auto-accepting.`, 
+      reason: `Strong success signal (${successCount} sessions). Auto-accepting.`, 
       suggestedState: "active",
       sessionCount, successCount, failureCount
     };
@@ -106,7 +118,7 @@ export async function evidenceCountGate(
   if (failureCount >= 3 && successCount === 0) {
     return {
       passed: false,
-      reason: `Strong failure signal (${failureCount} failures). Auto-rejecting.`, 
+      reason: `Strong failure signal (${failureCount} sessions). Auto-rejecting.`, 
       suggestedState: "draft",
       sessionCount, successCount, failureCount
     };
