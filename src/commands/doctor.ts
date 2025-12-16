@@ -671,6 +671,7 @@ export async function runSelfTest(config: Config): Promise<HealthCheck[]> {
         currentProvider,
         model: config.model,
         semanticSearchEnabled: config.semanticSearchEnabled,
+        embeddingModel: config.embeddingModel,
         keySource: "config"
       },
     });
