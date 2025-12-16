@@ -8,11 +8,12 @@ import { loadConfig } from "../config.js";
 import { findDiaryBySession, loadDiary, loadAllDiaries } from "../diary.js";
 import { loadMergedPlaybook, findBullet } from "../playbook.js";
 import { getEffectiveScore } from "../scoring.js";
-import { truncate, printJsonResult, printJsonError } from "../utils.js";
+import { truncate, printJsonResult, printJsonError, expandPath } from "../utils.js";
 import { ErrorCode } from "../types.js";
 import { PlaybookBullet, DiaryEntry, Config } from "../types.js";
 import chalk from "chalk";
 import { icon } from "../output.js";
+import path from "node:path";
 
 export interface WhyFlags {
   verbose?: boolean;
@@ -107,20 +108,30 @@ async function buildWhyResult(
 
   // Collect evidence from source sessions
   const sessionDetails: WhyResult["sourceSessions"] = [];
+  const diaryDir = path.resolve(expandPath(config.diaryDir));
   for (const sessionPath of sourceSessions.slice(0, verbose ? 10 : 5)) {
-    // Only look up diary for actual file paths, not synthetic identifiers
+    // Look up diaries by session path. If the value is a diary id or direct
+    // diary JSON file under diaryDir, load it directly.
     let diary: DiaryEntry | null = null;
-    if (sessionPath) {
-      if (sessionPath.endsWith(".json") || sessionPath.endsWith(".jsonl")) {
-        // It's a direct file path to a diary
-        diary = await loadDiary(sessionPath, config);
+    const ref = (sessionPath || "").trim();
+    if (ref) {
+      const looksLikeId = !ref.includes("/") && !ref.includes("\\");
+      if (looksLikeId) {
+        diary = await loadDiary(ref, config);
       } else {
-        // It's a session path (e.g. from IDE), try to find corresponding diary
-        diary = await findDiaryBySession(sessionPath, config.diaryDir);
+        const resolved = path.resolve(expandPath(ref));
+        const rel = path.relative(diaryDir, resolved);
+        const isDiaryFile =
+          resolved.endsWith(".json") && rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+        if (isDiaryFile) {
+          diary = await loadDiary(resolved, config);
+        }
+        if (!diary) {
+          diary = await findDiaryBySession(ref, config.diaryDir);
+        }
       }
-    } else {
-      // Find latest diary
     }
+
     sessionDetails.push({
       path: sessionPath,
       date: diary?.timestamp?.slice(0, 10) || null,
