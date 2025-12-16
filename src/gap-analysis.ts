@@ -6,6 +6,7 @@
  */
 
 import { Playbook, PlaybookBullet } from "./types.js";
+import { getActiveBullets } from "./playbook.js";
 
 /**
  * Standard categories for playbook rules
@@ -119,10 +120,8 @@ function getCategoryStatus(count: number): CategoryStatus {
  * Analyze playbook category distribution and identify gaps
  */
 export function analyzePlaybookGaps(playbook: Playbook): PlaybookGapAnalysis {
-  // Filter to active bullets only
-  const activeBullets = playbook.bullets.filter(
-    (b) => b.state !== "retired" && !b.deprecated
-  );
+  // Filter to active bullets only (consistent with getActiveBullets)
+  const activeBullets = getActiveBullets(playbook);
 
   const totalRules = activeBullets.length;
 
