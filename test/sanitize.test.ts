@@ -394,6 +394,30 @@ describe("compileExtraPatterns", () => {
     expect(result).toHaveLength(1);
     expect(result[0].test("file.txt")).toBe(true);
   });
+
+  it("skips pre-compiled RegExp objects with ReDoS patterns", () => {
+    // Even pre-compiled RegExp objects should be validated
+    const dangerous = new RegExp("(.+)+");
+    const safe = new RegExp("safe-pattern");
+    const result = compileExtraPatterns([dangerous, safe]);
+    expect(result).toHaveLength(1);
+    expect(result[0].source).toBe("safe-pattern");
+  });
+
+  it("skips pre-compiled RegExp with excessively long source", () => {
+    const longPattern = new RegExp("a".repeat(300));
+    const short = new RegExp("short");
+    const result = compileExtraPatterns([longPattern, short]);
+    expect(result).toHaveLength(1);
+    expect(result[0].source).toBe("short");
+  });
+
+  it("allows pre-compiled RegExp objects with safe patterns", () => {
+    const safe1 = new RegExp("pattern1", "gi");
+    const safe2 = new RegExp("pattern2", "i");
+    const result = compileExtraPatterns([safe1, safe2]);
+    expect(result).toHaveLength(2);
+  });
 });
 
 // =============================================================================

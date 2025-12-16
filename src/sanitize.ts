@@ -54,21 +54,36 @@ export interface SanitizationConfig {
 
 export type SecretPattern = { pattern: RegExp; replacement: string };
 
+/**
+ * Check if a regex pattern source is potentially vulnerable to ReDoS.
+ * Returns true if the pattern is safe, false if it should be skipped.
+ */
+function isRegexPatternSafe(source: string): boolean {
+  // Skip excessively long patterns
+  if (source.length > 256) return false;
+  // Heuristic ReDoS guard: avoid nested quantifiers like (.+)+ or (.*)+
+  // Matches a group containing * or + followed by another quantifier
+  if (/\([^)]*[*+][^)]*\)[*+?]/.test(source)) return false;
+  return true;
+}
+
 export function compileExtraPatterns(patterns: Array<string | RegExp> = []): RegExp[] {
   const compiled: RegExp[] = [];
   for (const raw of patterns) {
     try {
       if (raw instanceof RegExp) {
+        // Validate pre-compiled RegExp objects too
+        if (!isRegexPatternSafe(raw.source)) {
+          warn(`[sanitize] Skipped potentially unsafe regex pattern: ${raw.source}`);
+          continue;
+        }
         compiled.push(raw);
         continue;
       }
 
       const trimmed = raw.trim();
-      // Defensive: skip excessively long or potentially catastrophic patterns
-      if (!trimmed || trimmed.length > 256) continue;
-      // Heuristic ReDoS guard: avoid nested quantifiers like (.+)+ or (.*)+
-      // Matches a group containing * or + followed by another quantifier
-      if (/\([^)]*[*+][^)]*\)[*+?]/.test(trimmed)) {
+      if (!trimmed) continue;
+      if (!isRegexPatternSafe(trimmed)) {
         warn(`[sanitize] Skipped potentially unsafe regex pattern: ${trimmed}`);
         continue;
       }
