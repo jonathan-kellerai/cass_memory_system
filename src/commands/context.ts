@@ -22,6 +22,33 @@ import {
   fileExists,
   atomicWrite
 } from "../utils.js";
+
+/**
+ * ReDoS-safe regex matcher for deprecated patterns.
+ * Always treats patterns as regex (original behavior) with safety checks.
+ */
+function safeDeprecatedPatternMatcher(pattern: string): (text: string) => boolean {
+  if (!pattern) return () => false;
+
+  // ReDoS protection: reject excessively long patterns
+  if (pattern.length > 256) {
+    warn(`[context] Skipped excessively long regex pattern: ${pattern}`);
+    return () => false;
+  }
+  // ReDoS protection: reject patterns with nested quantifiers
+  if (/\([^)]*[*+][^)]*\)[*+?]/.test(pattern)) {
+    warn(`[context] Skipped potentially unsafe regex pattern: ${pattern}`);
+    return () => false;
+  }
+
+  try {
+    const regex = new RegExp(pattern, "i");
+    return (text: string) => regex.test(text);
+  } catch {
+    warn(`[context] Invalid regex pattern: ${pattern}`);
+    return () => false;
+  }
+}
 import { withLock } from "../lock.js";
 import { getEffectiveScore } from "../scoring.js";
 import { ContextResult, ScoredBullet, Config, CassSearchHit, PlaybookBullet } from "../types.js";
@@ -229,7 +256,9 @@ export async function generateContextResult(
   warnings.push(...historyWarnings);
 
   for (const pattern of playbook.deprecatedPatterns) {
-    if (new RegExp(pattern.pattern, "i").test(task)) {
+    // Use safeDeprecatedPatternMatcher for ReDoS-safe regex matching
+    const matches = safeDeprecatedPatternMatcher(pattern.pattern);
+    if (matches(task)) {
       const reason = pattern.reason ? ` (Reason: ${pattern.reason})` : "";
       const replacement = pattern.replacement ? ` - use ${pattern.replacement} instead` : "";
       warnings.push(`Task matches deprecated pattern "${pattern.pattern}"${replacement}${reason}`);
@@ -359,7 +388,9 @@ export async function contextWithoutCass(
 
     const warnings: string[] = ["Context generated without historical data (cass unavailable)"];
     for (const pattern of playbook.deprecatedPatterns) {
-      if (new RegExp(pattern.pattern, "i").test(task)) {
+      // Use safeDeprecatedPatternMatcher for ReDoS-safe regex matching
+      const matches = safeDeprecatedPatternMatcher(pattern.pattern);
+      if (matches(task)) {
         const reasonSuffix = pattern.reason ? ` (Reason: ${pattern.reason})` : "";
         const replacement = pattern.replacement ? ` - use ${pattern.replacement} instead` : "";
         warnings.push(`Task matches deprecated pattern "${pattern.pattern}"${replacement}${reasonSuffix}`);

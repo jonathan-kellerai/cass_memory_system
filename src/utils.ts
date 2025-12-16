@@ -1590,29 +1590,31 @@ function truncateMiddle(
 function buildDeprecatedMatcher(pattern: string): (text: string) => boolean {
   if (!pattern) return () => false;
 
-  if (pattern.startsWith("/") && pattern.endsWith("/") && pattern.length > 2) {
-    const body = pattern.slice(1, -1);
-    
-    // ReDoS protection
-    if (body.length > 256) {
-      warn(`[utils] Skipped excessively long regex pattern: ${pattern}`);
-      return () => false;
-    }
-    if (/\([^)]*[*+][^)]*\)[*+?]/.test(body)) {
-      warn(`[utils] Skipped potentially unsafe regex pattern: ${pattern}`);
-      return () => false;
-    }
+  const wrappedRegex = pattern.startsWith("/") && pattern.endsWith("/") && pattern.length > 2;
+  const looksLikeRegex = /\\/.test(pattern) || /[()[\]|?*+^$]/.test(pattern);
+  const body = wrappedRegex ? pattern.slice(1, -1) : pattern;
 
-    try {
-      const regex = new RegExp(body);
-      return (text: string) => regex.test(text);
-    } catch (e) {
-      warn(`[utils] Invalid regex pattern: ${pattern}`);
-      return () => false;
-    }
+  if (!wrappedRegex && !looksLikeRegex) {
+    return (text: string) => text.includes(pattern);
   }
 
-  return (text: string) => text.includes(pattern);
+  // ReDoS protection
+  if (body.length > 256) {
+    warn(`[utils] Skipped excessively long deprecated pattern regex: ${pattern}`);
+    return () => false;
+  }
+  if (/\([^)]*[*+][^)]*\)[*+?]/.test(body)) {
+    warn(`[utils] Skipped potentially unsafe deprecated pattern regex: ${pattern}`);
+    return () => false;
+  }
+
+  try {
+    const regex = new RegExp(body);
+    return (text: string) => regex.test(text);
+  } catch {
+    warn(`[utils] Invalid deprecated pattern regex: ${pattern}`);
+    return () => false;
+  }
 }
 
 export function checkDeprecatedPatterns(

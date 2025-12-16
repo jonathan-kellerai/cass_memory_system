@@ -761,7 +761,7 @@ export async function safeCassSearchWithDegraded(
       }));
 
     // Best-effort fallback: if force flag set, attempt to parse whatever stdout we get.
-    if (options.force) {
+    if (force) {
       try {
         const alt = spawnSync(resolvedCassPath, ["search", query, "--robot"], {
           encoding: "utf-8",
