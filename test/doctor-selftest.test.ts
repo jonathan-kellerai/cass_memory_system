@@ -305,6 +305,34 @@ describe("runSelfTest", () => {
         expect(llmCheck!.message).toContain("openai");
       });
     });
+
+    it("reports pass when apiKey is set in config (not env vars)", async () => {
+      // Clear all env var API keys
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
+      await withTempDir("selftest", async (dir) => {
+        const playbookPath = path.join(dir, "playbook.yaml");
+        await writeFile(playbookPath, createValidPlaybookYaml(0));
+
+        // Set apiKey in config instead of env var
+        const config = createTestConfig({
+          playbookPath,
+          provider: "anthropic",
+          model: "claude-sonnet-4-20250514",
+          apiKey: "sk-ant-api03-config-based-key-abc123"
+        });
+        const checks = await runSelfTest(config);
+
+        const llmCheck = checks.find(c => c.item === "LLM System");
+        expect(llmCheck).toBeDefined();
+        expect(llmCheck!.status).toBe("pass");
+        expect(llmCheck!.message).toContain("anthropic");
+        expect(llmCheck!.message).toContain("claude-sonnet-4");
+        expect((llmCheck!.details as any).keySource).toBe("config");
+      });
+    });
   });
 
   describe("Full Test Suite", () => {
