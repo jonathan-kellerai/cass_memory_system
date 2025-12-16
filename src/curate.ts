@@ -118,7 +118,8 @@ export function detectConflictsWithMeta(
   const hasNewMarkers = newNeg || newPos || newExc;
 
   for (const m of existingMeta) {
-    if (m.bullet.deprecated) continue;
+    // Skip deprecated/retired bullets - consistent with isDeprecated helper
+    if (m.bullet.deprecated || m.bullet.maturity === "deprecated" || m.bullet.state === "retired") continue;
 
     // Optimization: Jaccard using pre-computed token sets
     if (newTokens.length === 0 || m.tokens.size === 0) continue;
