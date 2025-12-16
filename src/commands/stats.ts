@@ -23,14 +23,15 @@ export async function statsCommand(options: { json?: boolean }): Promise<void> {
   const byState = countBy(bullets, (b) => b.state ?? "unknown");
   const byKind = countBy(bullets, (b) => b.kind ?? "unknown");
 
-  const scores = bullets.map((b) => ({
+  // Health metrics should reflect active bullets (aligned with scoreDistribution and merge candidates).
+  const scores = activeBullets.map((b) => ({
     bullet: b,
     score: getEffectiveScore(b, config)
   }));
 
   const topPerformers = scores
-    .filter((s) => !isNaN(s.score))
-    .sort((a, b) => b.score - a.score)
+    .filter((s) => Number.isFinite(s.score))
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 5)
     .map(({ bullet, score }) => ({
       id: bullet.id,
@@ -39,7 +40,7 @@ export async function statsCommand(options: { json?: boolean }): Promise<void> {
       helpfulCount: bullet.helpfulCount || 0
     }));
 
-  const mostHelpful = [...bullets]
+  const mostHelpful = [...activeBullets]
     .sort((a, b) => (b.helpfulCount || 0) - (a.helpfulCount || 0))
     .slice(0, 5)
     .map((b) => ({ id: b.id, content: b.content, helpfulCount: b.helpfulCount || 0 }));
@@ -48,7 +49,7 @@ export async function statsCommand(options: { json?: boolean }): Promise<void> {
   
   // Use config-aware staleness check
   const staleThresholdDays = config.scoring?.decayHalfLifeDays || 90;
-  const stale = bullets.filter((b) => isStale(b, staleThresholdDays));
+  const stale = activeBullets.filter((b) => isStale(b, staleThresholdDays));
 
   // Only check active bullets for merge candidates to improve performance and relevance
   const mergeCandidates = findMergeCandidates(activeBullets, 0.8, 5);
@@ -177,8 +178,8 @@ function printHumanStats(stats: {
   }
 
   console.log(chalk.bold("\nScore Distribution:"));
-  console.log(`  ${iconPrefix("star")}Excellent (>10): ${stats.scoreDistribution.excellent}`);
-  console.log(`  ${iconPrefix("check")}Good (5-10):    ${stats.scoreDistribution.good}`);
+  console.log(`  ${iconPrefix("star")}Excellent (>=10): ${stats.scoreDistribution.excellent}`);
+  console.log(`  ${iconPrefix("check")}Good (5-<10):     ${stats.scoreDistribution.good}`);
   console.log(`  ${iconPrefix("neutral")}Neutral (0-5):  ${stats.scoreDistribution.neutral}`);
   console.log(`  ${iconPrefix("warning")}At Risk (<0):   ${stats.scoreDistribution.atRisk}`);
 

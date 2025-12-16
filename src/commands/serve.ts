@@ -175,7 +175,8 @@ function computePlaybookStats(playbook: any, config: any) {
   const byState = countBy(bullets, (b) => b.state ?? "unknown");
   const byKind = countBy(bullets, (b) => b.kind ?? "unknown");
 
-  const scores = bullets.map((b) => ({
+  // Health metrics should align with scoreDistribution (active bullets only).
+  const scores = active.map((b) => ({
     bullet: b,
     score: getEffectiveScore(b, config),
   }));
@@ -192,7 +193,7 @@ function computePlaybookStats(playbook: any, config: any) {
     }));
 
   const atRiskCount = scores.filter((s) => (s.score ?? 0) < 0).length;
-  const staleCount = bullets.filter((b) => isStale(b, 90)).length;
+  const staleCount = active.filter((b) => isStale(b, 90)).length;
 
   return {
     total,
