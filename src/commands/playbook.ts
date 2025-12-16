@@ -10,77 +10,115 @@ import path from "node:path";
 import chalk from "chalk";
 import yaml from "yaml";
 import { z } from "zod";
-import { iconPrefix, icon } from "../output.js";
+import { formatKv, formatRule, formatTipPrefix, getOutputStyle, iconPrefix, icon, wrapText } from "../output.js";
 
 // Helper function to format a bullet for detailed display
 function formatBulletDetails(bullet: PlaybookBullet, effectiveScore: number, decayedCounts: { decayedHelpful: number; decayedHarmful: number }): string {
+  const style = getOutputStyle();
+  const cli = getCliName();
+  const maxWidth = Math.min(style.width, 84);
+  const divider = chalk.dim(formatRule("─", { maxWidth }));
+  const wrapWidth = Math.max(24, maxWidth - 4);
+
   const lines: string[] = [];
 
+  const category = bullet.category || "uncategorized";
+  const maturity = bullet.maturity || "candidate";
+  const kind = bullet.kind || "workflow_rule";
+  const scope = bullet.scope || "global";
+  const state = bullet.state || "active";
+
+  const createdAt = bullet.createdAt || "";
+  const updatedAt = bullet.updatedAt || "";
+  const createdMs = Date.parse(createdAt);
+  const ageDays = Number.isFinite(createdMs) ? Math.floor((Date.now() - createdMs) / 86_400_000) : null;
+
   lines.push(chalk.bold(`BULLET: ${bullet.id}`));
+  lines.push(divider);
   lines.push("");
-  lines.push(`Content: ${bullet.content}`);
-  lines.push(`Category: ${chalk.cyan(bullet.category)}`);
-  lines.push(`Kind: ${bullet.kind}`);
-  lines.push(`Maturity: ${chalk.yellow(bullet.maturity)}`);
-  lines.push(`Scope: ${bullet.scope}`);
 
+  lines.push(chalk.bold("Content:"));
+  lines.push(divider);
+  for (const line of wrapText(bullet.content.trim().replace(/\s+/g, " "), wrapWidth)) {
+    lines.push(`  ${line}`);
+  }
   lines.push("");
+
+  lines.push(chalk.bold("Details"));
+  lines.push(divider);
+  lines.push(
+    formatKv(
+      [
+        { key: "Category", value: category },
+        { key: "Kind", value: kind },
+        { key: "Maturity", value: maturity },
+        { key: "Scope", value: scope },
+        { key: "State", value: state },
+        ...(createdAt
+          ? [{ key: "Created", value: ageDays === null ? createdAt : `${createdAt} (${ageDays} days ago)` }]
+          : []),
+        ...(updatedAt ? [{ key: "Updated", value: updatedAt }] : []),
+      ],
+      { indent: "  ", width: maxWidth }
+    )
+  );
+  lines.push("");
+
   lines.push(chalk.bold("Scores:"));
-
-  const rawScore = bullet.helpfulCount - bullet.harmfulCount * 4;
-  lines.push(`  Raw score: ${rawScore}`);
-  lines.push(`  Effective score: ${effectiveScore.toFixed(2)} (with decay)`);
-  lines.push(`  Decayed helpful: ${decayedCounts.decayedHelpful.toFixed(2)}`);
-  lines.push(`  Decayed harmful: ${decayedCounts.decayedHarmful.toFixed(2)}`);
-  lines.push(`  Positive feedback: ${bullet.helpfulCount}`);
-  lines.push(`  Negative feedback: ${bullet.harmfulCount}`);
-
-  lines.push("");
-  lines.push(chalk.bold("History:"));
-  lines.push(`  Created: ${bullet.createdAt}`);
-  lines.push(`  Last updated: ${bullet.updatedAt}`);
-
-  const ageMs = Date.now() - new Date(bullet.createdAt).getTime();
-  const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
-  lines.push(`  Age: ${ageDays} days`);
+  lines.push(divider);
+  const rawScore = (bullet.helpfulCount || 0) - (bullet.harmfulCount || 0) * 4;
+  lines.push(
+    formatKv(
+      [
+        { key: "Effective", value: `${effectiveScore.toFixed(2)} (decay)` },
+        { key: "Raw", value: String(rawScore) },
+        { key: "Helpful", value: `${bullet.helpfulCount || 0} (decayed ${decayedCounts.decayedHelpful.toFixed(2)})` },
+        { key: "Harmful", value: `${bullet.harmfulCount || 0} (decayed ${decayedCounts.decayedHarmful.toFixed(2)})` },
+      ],
+      { indent: "  ", width: maxWidth }
+    )
+  );
 
   if (bullet.sourceSessions && bullet.sourceSessions.length > 0) {
     lines.push("");
-    lines.push(chalk.bold("Source sessions:"));
-    for (const session of bullet.sourceSessions.slice(0, 5)) {
+    lines.push(chalk.bold(`Source sessions (${bullet.sourceSessions.length})`));
+    lines.push(divider);
+    for (const session of bullet.sourceSessions.slice(0, 8)) {
       lines.push(`  - ${session}`);
     }
-    if (bullet.sourceSessions.length > 5) {
-      lines.push(`  ... and ${bullet.sourceSessions.length - 5} more`);
+    if (bullet.sourceSessions.length > 8) {
+      lines.push(chalk.dim(`  … (${bullet.sourceSessions.length - 8} more)`));
     }
   }
 
   if (bullet.sourceAgents && bullet.sourceAgents.length > 0) {
     lines.push("");
-    lines.push(chalk.bold("Source agents:"));
+    lines.push(chalk.bold("Source agents"));
+    lines.push(divider);
     lines.push(`  ${bullet.sourceAgents.join(", ")}`);
   }
 
   if (bullet.tags && bullet.tags.length > 0) {
     lines.push("");
-    lines.push(`Tags: [${bullet.tags.join(", ")}]`);
+    lines.push(chalk.bold("Tags"));
+    lines.push(divider);
+    lines.push(`  ${bullet.tags.join(", ")}`);
   }
 
   if (bullet.deprecated) {
     lines.push("");
     lines.push(chalk.red.bold("Status: DEPRECATED"));
-    if (bullet.deprecationReason) {
-      lines.push(`Reason: ${bullet.deprecationReason}`);
-    }
-    if (bullet.deprecatedAt) {
-      lines.push(`Deprecated at: ${bullet.deprecatedAt}`);
-    }
+    if (bullet.deprecationReason) lines.push(`Reason: ${bullet.deprecationReason}`);
+    if (bullet.deprecatedAt) lines.push(`Deprecated at: ${bullet.deprecatedAt}`);
   }
 
   if (bullet.pinned) {
     lines.push("");
     lines.push(chalk.blue.bold(`${iconPrefix("pin")}PINNED`));
   }
+
+  lines.push("");
+  lines.push(chalk.gray(`${formatTipPrefix()}See provenance: ${cli} why ${bullet.id}`));
 
   return lines.join("\n");
 }
@@ -585,10 +623,42 @@ export async function playbookCommand(
     if (flags.json) {
       printJsonResult({ bullets });
     } else {
+      const style = getOutputStyle();
+      const cli = getCliName();
+      const maxWidth = Math.min(style.width, 84);
+      const divider = chalk.dim(formatRule("─", { maxWidth }));
+      const wrapWidth = Math.max(24, maxWidth - 6);
+
       console.log(chalk.bold(`PLAYBOOK RULES (${bullets.length}):`));
-      bullets.forEach((b: any) => {
-        console.log(`[${b.id}] ${chalk.cyan(b.category)}: ${b.content}`);
-      });
+      console.log(divider);
+
+      if (bullets.length === 0) {
+        console.log(chalk.dim("(No active rules found)"));
+        console.log(chalk.gray(`${formatTipPrefix()}Try '${cli} reflect' to learn rules from sessions, or '${cli} playbook add \"...\"'.`));
+        return;
+      }
+
+      for (const b of bullets) {
+        const score = getEffectiveScore(b, config);
+        const scoreColor = score >= 5 ? chalk.green : score >= 0 ? chalk.white : chalk.red;
+        const scoreLabel = Number.isFinite(score) ? scoreColor(score.toFixed(1)) : chalk.dim("n/a");
+
+        const pinnedLabel = b.pinned ? chalk.blue(` ${iconPrefix("pin")}PINNED`) : "";
+        const meta = chalk.dim(` ${b.category}/${b.scope} • ${b.kind} • ${b.maturity} • score ${scoreLabel}`);
+        console.log(chalk.bold(`[${b.id}]`) + meta + pinnedLabel);
+
+        const preview = String(b.content || "").trim().replace(/\s+/g, " ");
+        const wrapped = wrapText(preview, wrapWidth);
+        for (const line of wrapped.slice(0, 2)) {
+          console.log(chalk.gray(`  ${line}`));
+        }
+        if (wrapped.length > 2) {
+          console.log(chalk.dim("  …"));
+        }
+      }
+
+      console.log("");
+      console.log(chalk.gray(`${formatTipPrefix()}Use '${cli} playbook get <id>' for full details.`));
     }
     return;
   }

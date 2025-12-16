@@ -485,6 +485,19 @@ export async function serveCommand(options: { port?: number; host?: string } = {
     server.on("error", reject);
   });
 
-  log(`MCP HTTP server listening on http://${host}:${port}`, true);
+  const baseUrl = `http://${host}:${port}`;
+  log(`MCP HTTP server listening on ${baseUrl}`, true);
   warn("Transport is HTTP-only; stdio/SSE are intentionally disabled.");
+  log(`Tools: ${TOOL_DEFS.map((t) => t.name).join(", ")}`, true);
+  log(`Resources: ${RESOURCE_DEFS.map((r) => r.uri).join(", ")}`, true);
+  log("Example (list tools):", true);
+  log(
+    `  curl -sS -X POST ${baseUrl} -H "content-type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`,
+    true
+  );
+  log("Example (call cm_context):", true);
+  log(
+    `  curl -sS -X POST ${baseUrl} -H "content-type: application/json" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"cm_context","arguments":{"task":"fix auth timeout","top":5,"history":3}}}'`,
+    true
+  );
 }

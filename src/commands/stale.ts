@@ -7,9 +7,10 @@
 import { loadConfig } from "../config.js";
 import { loadMergedPlaybook, getActiveBullets } from "../playbook.js";
 import { getEffectiveScore } from "../scoring.js";
-import { truncate, getCliName, printJsonResult } from "../utils.js";
-import { PlaybookBullet, Config } from "../types.js";
+import { getCliName, printJsonResult } from "../utils.js";
+import { PlaybookBullet } from "../types.js";
 import chalk from "chalk";
+import { formatRule, formatTipPrefix, getOutputStyle, wrapText } from "../output.js";
 
 export interface StaleFlags {
   days?: number;
@@ -168,56 +169,77 @@ function printStaleBullets(
   flags: StaleFlags,
   cli: string
 ): void {
+  const style = getOutputStyle();
+  const maxWidth = Math.min(style.width, 84);
+  const divider = chalk.dim(formatRule("─", { maxWidth }));
+  const wrapWidth = Math.max(24, maxWidth - 6);
+
+  const filterDesc: string[] = [];
+  if (flags.scope && flags.scope !== "all") filterDesc.push(`scope: ${flags.scope}`);
+  const filterStr = filterDesc.length > 0 ? ` • ${filterDesc.join(", ")}` : "";
+
+  console.log(chalk.bold("STALE"));
+  console.log(divider);
+  console.log(chalk.dim(`Threshold: ${threshold}+ days • Found: ${bullets.length}/${totalActive}${filterStr}`));
+  console.log("");
+
   if (bullets.length === 0) {
-    console.log(chalk.green(`\nNo stale bullets found (threshold: ${threshold} days)`));
-    console.log(chalk.gray(`All ${totalActive} active bullets have received recent feedback.`));
+    console.log(chalk.green("No stale bullets found."));
+    console.log(chalk.gray(`All ${totalActive} active bullets have recent feedback.`));
+    console.log(chalk.gray(`${formatTipPrefix()}Try '${cli} stale --days 0' to review everything.`));
     return;
   }
 
-  const filterDesc = [];
-  if (flags.scope && flags.scope !== "all") filterDesc.push(`scope: ${flags.scope}`);
-  const filterStr = filterDesc.length > 0 ? ` (${filterDesc.join(", ")})` : "";
-
-  console.log(chalk.bold(`\nSTALE BULLETS (no feedback in ${threshold}+ days)${filterStr}`));
-  console.log(chalk.gray("═".repeat(60)));
-  console.log(chalk.gray(`Found ${bullets.length} stale out of ${totalActive} active bullets\n`));
-
   for (const b of bullets) {
     const scoreColor = b.score >= 5 ? chalk.green : b.score >= 0 ? chalk.white : chalk.red;
-    const daysStr = chalk.yellow(`[${b.daysSinceLastFeedback} days]`);
+    const daysLabel = chalk.yellow(`${b.daysSinceLastFeedback}d`);
+    const scoreLabel = scoreColor(b.score.toFixed(1));
 
-    console.log(`${daysStr} ${chalk.bold(b.id)}: ${truncate(b.content, 45)}`);
-    console.log(chalk.gray(`   ${b.category} | ${b.scope} | ${b.maturity} | Score: ${scoreColor(b.score.toFixed(1))}`));
+    console.log(
+      `${daysLabel} ${chalk.bold(`[${b.id}]`)}${chalk.dim(
+        ` ${b.category}/${b.scope} • ${b.maturity} • score ${scoreLabel}`
+      )}`
+    );
 
-    if (b.lastFeedback.timestamp) {
-      const action = b.lastFeedback.action === "helpful" ? chalk.green("helpful") : chalk.red("harmful");
-      console.log(chalk.gray(`   Last feedback: ${b.lastFeedback.timestamp.slice(0, 10)} (marked ${action})`));
-    } else {
-      console.log(chalk.gray(`   No feedback since creation`));
+    for (const line of wrapText(b.content.trim().replace(/\s+/g, " "), wrapWidth)) {
+      console.log(chalk.gray(`  ${line}`));
     }
 
-    console.log(chalk.cyan(`   → ${b.recommendation}`));
-    console.log();
+    if (b.lastFeedback.timestamp) {
+      const action =
+        b.lastFeedback.action === "helpful" ? chalk.green("helpful") : chalk.red("harmful");
+      console.log(chalk.dim(`  Last feedback: ${b.lastFeedback.timestamp.slice(0, 10)} (${action})`));
+    } else {
+      console.log(chalk.dim("  Last feedback: (none yet)"));
+    }
+
+    for (const line of wrapText(b.recommendation, wrapWidth)) {
+      console.log(chalk.cyan(`  ${line}`));
+    }
+    console.log("");
   }
 
-  // Summary recommendations
-  console.log(chalk.bold("RECOMMENDATIONS:"));
-  console.log(chalk.gray("─".repeat(40)));
+  const veryStale = bullets.filter((b) => b.daysSinceLastFeedback > 180);
+  const negative = bullets.filter((b) => b.score < 0);
+  const candidates = bullets.filter((b) => b.maturity === "candidate" && b.daysSinceLastFeedback > 90);
 
-  const veryStale = bullets.filter(b => b.daysSinceLastFeedback > 180);
-  const negative = bullets.filter(b => b.score < 0);
-  const candidates = bullets.filter(b => b.maturity === "candidate" && b.daysSinceLastFeedback > 90);
-
+  console.log(chalk.bold("Next actions"));
+  console.log(divider);
   if (negative.length > 0) {
-    console.log(chalk.red(`  • ${negative.length} bullets with negative scores - consider '${cli} forget <id> --reason \"...\"'`));
+    const ids = negative.slice(0, 5).map((b) => b.id).join(", ");
+    const suffix = negative.length > 5 ? ` (+${negative.length - 5} more)` : "";
+    console.log(
+      chalk.red(
+        `- ${negative.length} with negative scores → review/forget (${cli} forget <id> --reason \"...\")`
+      )
+    );
+    console.log(chalk.dim(`  IDs: ${ids}${suffix}`));
   }
   if (veryStale.length > 0) {
-    console.log(chalk.yellow(`  • ${veryStale.length} bullets >180 days stale - review for deprecation`));
+    console.log(chalk.yellow(`- ${veryStale.length} >180 days stale → consider deprecating candidates`));
   }
   if (candidates.length > 0) {
-    console.log(chalk.blue(`  • ${candidates.length} stale candidates - validate or remove`));
+    console.log(chalk.blue(`- ${candidates.length} stale candidates → validate or remove`));
   }
-  if (bullets.length > 10) {
-    console.log(chalk.gray(`  • Consider a cleanup session to review these ${bullets.length} bullets`));
-  }
+  console.log(chalk.gray(`${formatTipPrefix()}Use '${cli} playbook get <id>' to inspect, then '${cli} mark <id> --helpful|--harmful'.`));
 }
