@@ -1,6 +1,5 @@
 import { loadConfig } from "../config.js";
-import { loadPlaybook, savePlaybook, findBullet, addBullet } from "../playbook.js";
-import { appendBlockedLog } from "../playbook.js";
+import { loadPlaybook, savePlaybook, findBullet, addBullet, deprecateBullet, appendBlockedLog } from "../playbook.js";
 import path from "node:path";
 import { fileExists, now, error as logError, resolveRepoDir, expandPath, printJsonResult, printJsonError } from "../utils.js";
 import { ErrorCode } from "../types.js";
@@ -84,8 +83,6 @@ export async function forgetCommand(
       }
 
       // 3. Deprecate original
-      // Use dynamic import deprecated/removed or update import
-      const { deprecateBullet } = await import("../playbook.js");
       deprecateBullet(playbook, bulletId, flags.reason!, antiPatternId);
 
       await savePlaybook(playbook, savePath);
