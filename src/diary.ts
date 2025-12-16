@@ -184,7 +184,7 @@ async function enrichWithRelatedSessions(
   const hits = await safeCassSearch(query, {
     limit: 5,
     days: config.sessionLookbackDays,
-  }, config.cassPath);
+  }, config.cassPath, config);
 
   const allowlist = (cross.agents || []).map(normalizeAgentName).filter(Boolean);
   const diaryAgent = normalizeAgentName(diary.agent);

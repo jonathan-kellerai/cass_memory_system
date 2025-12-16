@@ -6,7 +6,7 @@ import {
   Playbook,
   PlaybookBullet,
 } from "./types.js";
-import { atomicWrite, hashContent, resolveGlobalDir, warn } from "./utils.js";
+import { atomicWrite, expandPath, hashContent, resolveGlobalDir, warn } from "./utils.js";
 import { withLock } from "./lock.js";
 import { getOutputStyle } from "./output.js";
 
@@ -251,7 +251,7 @@ export async function loadEmbeddingCache(
   options: { cachePath?: string; model?: string } = {}
 ): Promise<EmbeddingCache> {
   const model = options.model || DEFAULT_EMBEDDING_MODEL;
-  const cachePath = options.cachePath || getEmbeddingCachePath();
+  const cachePath = expandPath(options.cachePath || getEmbeddingCachePath());
 
   try {
     const raw = await fs.readFile(cachePath, "utf-8");
@@ -281,7 +281,7 @@ export async function saveEmbeddingCache(
   cache: EmbeddingCache,
   options: { cachePath?: string } = {}
 ): Promise<void> {
-  const cachePath = options.cachePath || getEmbeddingCachePath();
+  const cachePath = expandPath(options.cachePath || getEmbeddingCachePath());
   try {
     await atomicWrite(cachePath, JSON.stringify(cache, null, 2));
   } catch (err: any) {
@@ -300,7 +300,7 @@ export async function loadOrComputeEmbeddingsForBullets(
   options: { model?: string; cachePath?: string } = {}
 ): Promise<{ cache: EmbeddingCache; stats: EmbeddingStats }> {
   const model = options.model || DEFAULT_EMBEDDING_MODEL;
-  const cachePath = options.cachePath || getEmbeddingCachePath();
+  const cachePath = expandPath(options.cachePath || getEmbeddingCachePath());
 
   // Use lock to prevent concurrent cache corruption
   return withLock(cachePath, async () => {
