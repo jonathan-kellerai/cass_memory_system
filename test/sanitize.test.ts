@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { sanitize, compileExtraPatterns, SECRET_PATTERNS } from "../src/sanitize.js";
+import { sanitize, compileExtraPatterns, SECRET_PATTERNS, isSemanticallyBlocked } from "../src/sanitize.js";
 
 // =============================================================================
 // SECRET_PATTERNS
@@ -393,5 +393,20 @@ describe("compileExtraPatterns", () => {
     const result = compileExtraPatterns(["file\\.txt"]);
     expect(result).toHaveLength(1);
     expect(result[0].test("file.txt")).toBe(true);
+  });
+});
+
+// =============================================================================
+// isSemanticallyBlocked
+// =============================================================================
+describe("isSemanticallyBlocked", () => {
+  it("matches exact content (case/whitespace normalized)", () => {
+    const blocked = ["Always validate user input before processing"];
+    expect(isSemanticallyBlocked("always   validate user input before processing", blocked)).toBe(true);
+  });
+
+  it("returns false for unrelated content", () => {
+    const blocked = ["Never use var"];
+    expect(isSemanticallyBlocked("Prefer const for variables", blocked)).toBe(false);
   });
 });

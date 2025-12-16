@@ -174,6 +174,11 @@ export function isSemanticallyBlocked(
 ): boolean {
   if (!content || blockedEntries.length === 0) return false;
 
+  // Fast path: exact/near-exact matches (case/whitespace normalized).
+  const contentDigest = hashContent(content);
+  const blockedDigests = new Set(blockedEntries.map(hashContent));
+  if (blockedDigests.has(contentDigest)) return true;
+
   const normalizedContent = content.trim().toLowerCase();
 
   for (const blocked of blockedEntries) {
