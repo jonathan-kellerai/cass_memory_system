@@ -58,6 +58,7 @@ diary/*.md
 usage.jsonl
 
 # Beads (issue tracking is committed; runtime files are ignored via `.beads/.gitignore`)
+.beads/.local_version
 
 # Python / uv
 __pycache__/
