@@ -437,7 +437,7 @@ export function addBullet(
   const agent = extractAgentFromPath(sourceSession); 
 
   const newBullet: PlaybookBullet = {
-    id: generateBulletId(),
+    id: data.id || generateBulletId(),
     content: data.content,
     category: data.category,
     kind: data.kind || "workflow_rule",

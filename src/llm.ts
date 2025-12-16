@@ -98,18 +98,14 @@ export function validateApiKey(provider: string): void {
 }
 
 export function getModel(config: { provider: string; model: string; apiKey?: string }): LanguageModel {
-  try {
-    const provider = config.provider as LLMProvider;
-    const apiKey = config.apiKey || getApiKey(provider);
-    
-    switch (provider) {
-      case "openai": return createOpenAI({ apiKey })(config.model);
-      case "anthropic": return createAnthropic({ apiKey })(config.model);
-      case "google": return createGoogleGenerativeAI({ apiKey })(config.model);
-      default: throw new Error(`Unsupported provider: ${config.provider}`);
-    }
-  } catch (err: any) {
-    throw err;
+  const provider = config.provider as LLMProvider;
+  const apiKey = config.apiKey || getApiKey(provider);
+
+  switch (provider) {
+    case "openai": return createOpenAI({ apiKey })(config.model);
+    case "anthropic": return createAnthropic({ apiKey })(config.model);
+    case "google": return createGoogleGenerativeAI({ apiKey })(config.model);
+    default: throw new Error(`Unsupported provider: ${config.provider}`);
   }
 }
 

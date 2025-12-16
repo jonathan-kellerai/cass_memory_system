@@ -222,6 +222,7 @@ export async function orchestrateReflection(
           processedDeltas.push({
             type: "add",
             bullet: {
+              id: newBulletId,  // Pre-assign ID so deprecate deltas can reference it
               content: delta.mergedContent,
               category: "merged", // Default category, curation might refine or we could infer
               tags: []
