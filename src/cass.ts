@@ -10,7 +10,7 @@ import {
   Config,
   RemoteCassHost
 } from "./types.js";
-import { log, error, expandPath } from "./utils.js";
+import { log, warn, error, expandPath } from "./utils.js";
 import { sanitize, compileExtraPatterns } from "./sanitize.js";
 import { loadConfig, getSanitizeConfig } from "./config.js";
 
@@ -226,23 +226,19 @@ export function cassAvailable(cassPath = "cass", opts: { quiet?: boolean } = {})
       const code = (result.error as any)?.code;
       // Treat missing binary quietly when requested.
       if (!opts.quiet && code !== "ENOENT") {
-        console.error("cassAvailable spawn error:", result.error);
+        warn(`cassAvailable spawn error: ${String(result.error)}`);
       }
       return false;
     }
     if (result.status !== 0) {
       if (!opts.quiet) {
-        console.error(
-          "cassAvailable non-zero status:",
-          result.status,
-          result.stderr?.toString()
-        );
+        warn(`cassAvailable non-zero status: ${result.status} ${result.stderr?.toString()?.trim() || ""}`.trim());
       }
       return false;
     }
     return true;
   } catch (e) {
-    if (!opts.quiet) console.error("cassAvailable exception:", e);
+    if (!opts.quiet) warn(`cassAvailable exception: ${String(e)}`);
     return false;
   }
 }
@@ -392,6 +388,16 @@ function shellEscapePosix(arg: string): string {
   return "'" + arg.replace(/'/g, "'\"'\"'") + "'";
 }
 
+function shellEscapeForUserCommand(arg: string): string {
+  // These strings are meant to be copy/pasted by humans (not executed by the program).
+  // Quote conservatively to avoid glob expansion and shell metacharacter surprises.
+  if (process.platform === "win32") {
+    // PowerShell single-quote escaping: ' -> ''
+    return `'${arg.replace(/'/g, "''")}'`;
+  }
+  return shellEscapePosix(arg);
+}
+
 function buildCassSearchArgs(query: string, options: CassSearchOptions = {}): string[] {
   const args = ["search", query, "--robot"];
 
@@ -428,6 +434,9 @@ async function sshCassSearch(
   }
   if (/\s/.test(sshTarget)) {
     throw new Error(`Invalid remoteCass host '${sshTarget}': ssh target must not contain whitespace`);
+  }
+  if (/[^a-zA-Z0-9@._:%\-:\[\]]/.test(sshTarget)) {
+    throw new Error(`Invalid remoteCass host '${sshTarget}': ssh target contains unsafe characters`);
   }
 
   const commandArgs = ["cass", ...buildCassSearchArgs(query, options)];
@@ -535,13 +544,14 @@ function classifyRemoteCassSearchFailure(
   const lower = `${msg}\n${stderr}`.toLowerCase();
   const code = (err as any)?.code;
   const display = label && label !== sshTarget ? `${label} (${sshTarget})` : sshTarget;
+  const quotedSshTarget = shellEscapeForUserCommand(sshTarget);
 
   if (lower.includes("invalid remotecass host")) {
     return {
       available: false,
       reason: "OTHER",
       message: `remote(${display}): invalid ssh target; check config.remoteCass.hosts.`,
-      suggestedFix: ["Edit config.remoteCass.hosts to a valid ssh target (no whitespace, must not start with '-')"],
+      suggestedFix: ["Edit config.remoteCass.hosts to a valid ssh target (no whitespace, must not start with '-', only safe hostname/user characters)"],
     };
   }
 
@@ -558,7 +568,7 @@ function classifyRemoteCassSearchFailure(
       available: false,
       reason: "OTHER",
       message: `ssh to ${display} failed; remote history unavailable.`,
-      suggestedFix: [`ssh ${sshTarget} true`, `ssh ${sshTarget} cass health`],
+      suggestedFix: [`ssh ${quotedSshTarget} true`, `ssh ${quotedSshTarget} cass health`],
     };
   }
 
@@ -572,7 +582,7 @@ function classifyRemoteCassSearchFailure(
       available: false,
       reason: "NOT_FOUND",
       message: `cass not found on ${display}; remote history disabled for this host.`,
-      suggestedFix: [`ssh ${sshTarget} cargo install cass`, `ssh ${sshTarget} cass index --full`],
+      suggestedFix: [`ssh ${quotedSshTarget} cargo install cass`, `ssh ${quotedSshTarget} cass index --full`],
     };
   }
 
@@ -583,8 +593,8 @@ function classifyRemoteCassSearchFailure(
       reason: "TIMEOUT",
       message: `remote(${display}): ${base.message}`,
       suggestedFix: [
-        `ssh ${sshTarget} cass search "<query>" --robot --limit ${Math.max(1, Math.min(5, options.limit || 5))} --days ${Math.max(1, Math.min(30, options.days || 7))}`,
-        `ssh ${sshTarget} cass health`,
+        `ssh ${quotedSshTarget} cass search "<query>" --robot --limit ${Math.max(1, Math.min(5, options.limit || 5))} --days ${Math.max(1, Math.min(30, options.days || 7))}`,
+        `ssh ${quotedSshTarget} cass health`,
       ],
     };
   }
@@ -594,7 +604,7 @@ function classifyRemoteCassSearchFailure(
       available: false,
       reason: "INDEX_MISSING",
       message: `remote(${display}): ${base.message}`,
-      suggestedFix: [`ssh ${sshTarget} cass index --full`, `ssh ${sshTarget} cass health`],
+      suggestedFix: [`ssh ${quotedSshTarget} cass index --full`, `ssh ${quotedSshTarget} cass health`],
     };
   }
 
@@ -603,7 +613,7 @@ function classifyRemoteCassSearchFailure(
       available: false,
       reason: "NOT_FOUND",
       message: `remote(${display}): ${base.message}`,
-      suggestedFix: [`ssh ${sshTarget} cargo install cass`, `ssh ${sshTarget} cass index --full`],
+      suggestedFix: [`ssh ${quotedSshTarget} cargo install cass`, `ssh ${quotedSshTarget} cass index --full`],
     };
   }
 
@@ -611,7 +621,7 @@ function classifyRemoteCassSearchFailure(
     available: false,
     reason: "OTHER",
     message: `remote(${display}): ${base.message}`,
-    suggestedFix: [`ssh ${sshTarget} cass health`],
+    suggestedFix: [`ssh ${quotedSshTarget} cass health`],
   };
 }
 

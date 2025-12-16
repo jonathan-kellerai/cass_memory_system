@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { ProcessedEntry } from "./types.js";
-import { ensureDir, fileExists, expandPath, now, atomicWrite, getCliName, withLock } from "./utils.js";
+import { ensureDir, fileExists, expandPath, now, atomicWrite, withLock, warn } from "./utils.js";
 import { sanitize } from "./sanitize.js";
 
 // -----------------------------------------------------------------------------
@@ -182,7 +182,7 @@ export async function trackEvent<T extends UsageEventType>(
     });
   } catch (error) {
     // Fire-and-forget: log error but don't propagate
-    console.error(`[${getCliName()}] Failed to track event: ${error}`);
+    warn(`Failed to track event: ${error}`);
   }
 }
 
@@ -453,7 +453,7 @@ export class ProcessedLog {
         }
       }
     } catch (error) {
-      console.error(`Failed to load processed log: ${error}`);
+      warn(`Failed to load processed log: ${error}`);
     }
   }
 
