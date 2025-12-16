@@ -5,7 +5,7 @@ import { findSimilarBulletsSemantic, getSemanticStatus, formatSemanticModeMessag
 import { getEffectiveScore } from "../scoring.js";
 import { error as logError, jaccardSimilarity, truncate, getCliName, printJsonResult, printJsonError } from "../utils.js";
 import { ErrorCode, PlaybookBullet } from "../types.js";
-import { getOutputStyle } from "../output.js";
+import { formatRule, formatTipPrefix, getOutputStyle, wrapText } from "../output.js";
 
 export type SimilarScope = "global" | "workspace" | "all";
 
@@ -137,42 +137,43 @@ export async function similarCommand(query: string, flags: SimilarFlags): Promis
     const style = getOutputStyle();
     const modeMessage = formatSemanticModeMessage(result.mode, semanticStatus);
 
-    console.log(chalk.bold(`SIMILAR BULLETS TO: "${result.query}"`));
-    console.log("=".repeat(Math.max(10, Math.min(80, result.query.length + 22))));
-    console.log("");
+    const maxWidth = Math.min(style.width, 84);
+    const divider = chalk.dim(formatRule("─", { maxWidth }));
 
-    // Show mode with appropriate styling
-    if (result.mode === "semantic") {
-      const icon = style.emoji ? "🔍 " : "";
-      console.log(chalk.green(`${icon}${modeMessage}`));
-    } else {
-      const icon = style.emoji ? "🔤 " : "";
-      console.log(chalk.yellow(`${icon}${modeMessage}`));
-    }
+    console.log(chalk.bold("SIMILAR"));
+    console.log(divider);
+    console.log(chalk.dim(`Query: ${result.query}`));
+    console.log((result.mode === "semantic" ? chalk.green : chalk.yellow)(modeMessage));
     console.log("");
 
     if (result.results.length === 0) {
-      console.log(chalk.gray("No matches found (try lowering --threshold)."));
+      console.log(chalk.gray("No matches found."));
+      console.log(chalk.gray(`${formatTipPrefix()}Try lowering the threshold: ${getCliName()} similar "<query>" --threshold 0.5`));
       return;
     }
 
-    console.log(`Found ${result.results.length} similar bullet(s):`);
+    console.log(chalk.bold(`Matches (${result.results.length})`));
+    console.log(divider);
     console.log("");
 
     for (let i = 0; i < result.results.length; i++) {
       const r = result.results[i];
+      const sim = r.similarity.toFixed(2);
+      const score = r.effectiveScore.toFixed(1);
       console.log(
-        `${i + 1}. [Similarity: ${r.similarity.toFixed(2)}] ${truncate(r.preview, 80)}`
+        chalk.bold(`${i + 1}. [${r.id}]`) +
+        chalk.dim(` • sim ${sim} • score ${score} • ${r.category}/${r.scope}`)
       );
-      console.log(
-        `   ID: ${r.id} | Category: ${chalk.cyan(r.category)} | Score: ${r.effectiveScore.toFixed(2)}`
-      );
-      console.log(`   "${r.preview}"`);
+
+      const contentWidth = Math.max(24, maxWidth - 4);
+      for (const line of wrapText(r.preview, contentWidth)) {
+        console.log(`  ${line}`);
+      }
       console.log("");
     }
 
     const cli = getCliName();
-    console.log(`TIP: Use '${cli} playbook get <id>' to see full details`);
+    console.log(chalk.gray(`${formatTipPrefix()}Use '${cli} playbook get <id>' to see full details.`));
   } catch (err: any) {
     const message = err?.message || String(err);
     if (flags.json) {

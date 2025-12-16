@@ -1,8 +1,9 @@
-import { Config, Playbook, PlaybookBullet, AuditViolation } from "./types.js";
+import { Config, Playbook, AuditViolation } from "./types.js";
 import { cassExport } from "./cass.js";
-import { PROMPTS, llmWithFallback, fillPrompt } from "./llm.js"; 
+import { PROMPTS, llmWithFallback, fillPrompt } from "./llm.js";
 import { z } from "zod";
-import { log, warn, truncateForContext } from "./utils.js";
+import { warn, truncateForContext } from "./utils.js";
+import { getActiveBullets } from "./playbook.js";
 
 export async function scanSessionsForViolations(
   sessions: string[],
@@ -10,7 +11,8 @@ export async function scanSessionsForViolations(
   config: Config
 ): Promise<AuditViolation[]> {
   const violations: AuditViolation[] = [];
-  const activeBullets = playbook.bullets.filter(b => !b.deprecated && b.state !== "retired");
+  // Use getActiveBullets for consistent filtering (includes maturity !== "deprecated")
+  const activeBullets = getActiveBullets(playbook);
   
   const CONCURRENCY = 3;
   const AuditOutputSchema = z.object({

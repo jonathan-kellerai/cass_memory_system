@@ -3,6 +3,7 @@ import { loadMergedPlaybook, getActiveBullets } from "../playbook.js";
 import { scanSessionsForViolations } from "../audit.js";
 import { AuditResult } from "../types.js";
 import { cassTimeline } from "../cass.js";
+import { getAvailableProviders } from "../llm.js";
 import chalk from "chalk";
 import { error as logError, printJsonError, printJsonResult } from "../utils.js";
 import { ErrorCode } from "../types.js";
@@ -10,8 +11,11 @@ import { ErrorCode } from "../types.js";
 export async function auditCommand(flags: { days?: number; json?: boolean }) {
   try {
     const config = await loadConfig();
-    if (!config.apiKey) {
-      const message = "Audit requires LLM access (missing API key). Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or run with a provider configured in config.";
+    const hasApiKeyOverride = typeof config.apiKey === "string" && config.apiKey.trim() !== "";
+    const availableProviders = getAvailableProviders();
+    if (!hasApiKeyOverride && availableProviders.length === 0) {
+      const message =
+        "Audit requires LLM access. Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_GENERATIVE_AI_API_KEY (or set apiKey in config).";
       if (flags.json) {
         printJsonError(message, { code: ErrorCode.MISSING_REQUIRED });
       } else {

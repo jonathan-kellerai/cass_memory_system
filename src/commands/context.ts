@@ -22,39 +22,47 @@ import {
   fileExists,
   atomicWrite
 } from "../utils.js";
-
-/**
- * ReDoS-safe regex matcher for deprecated patterns.
- * Always treats patterns as regex (original behavior) with safety checks.
- */
-function safeDeprecatedPatternMatcher(pattern: string): (text: string) => boolean {
-  if (!pattern) return () => false;
-
-  // ReDoS protection: reject excessively long patterns
-  if (pattern.length > 256) {
-    warn(`[context] Skipped excessively long regex pattern: ${pattern}`);
-    return () => false;
-  }
-  // ReDoS protection: reject patterns with nested quantifiers
-  if (/\([^)]*[*+][^)]*\)[*+?]/.test(pattern)) {
-    warn(`[context] Skipped potentially unsafe regex pattern: ${pattern}`);
-    return () => false;
-  }
-
-  try {
-    const regex = new RegExp(pattern, "i");
-    return (text: string) => regex.test(text);
-  } catch {
-    warn(`[context] Invalid regex pattern: ${pattern}`);
-    return () => false;
-  }
-}
 import { withLock } from "../lock.js";
 import { getEffectiveScore } from "../scoring.js";
 import { ContextResult, ScoredBullet, Config, CassSearchHit, PlaybookBullet } from "../types.js";
 import { cosineSimilarity, embedText, loadOrComputeEmbeddingsForBullets } from "../semantic.js";
 import chalk from "chalk";
 import { agentIconPrefix, formatRule, formatTipPrefix, getOutputStyle, iconPrefix, wrapText } from "../output.js";
+
+/**
+ * ReDoS-safe matcher for deprecated patterns.
+ * Supports both literal substring patterns and regex-like patterns.
+ */
+function safeDeprecatedPatternMatcher(pattern: string): (text: string) => boolean {
+  if (!pattern) return () => false;
+
+  const wrappedRegex = pattern.startsWith("/") && pattern.endsWith("/") && pattern.length > 2;
+  const looksLikeRegex = /\\/.test(pattern) || /[()[\]|?*+^$]/.test(pattern);
+  const body = wrappedRegex ? pattern.slice(1, -1) : pattern;
+
+  if (!wrappedRegex && !looksLikeRegex) {
+    const needle = pattern.toLowerCase();
+    return (text: string) => text.toLowerCase().includes(needle);
+  }
+
+  // ReDoS protection
+  if (body.length > 256) {
+    warn(`[context] Skipped excessively long deprecated pattern regex: ${pattern}`);
+    return () => false;
+  }
+  if (/\([^)]*[*+][^)]*\)[*+?]/.test(body)) {
+    warn(`[context] Skipped potentially unsafe deprecated pattern regex: ${pattern}`);
+    return () => false;
+  }
+
+  try {
+    const regex = new RegExp(body, "i");
+    return (text: string) => regex.test(text);
+  } catch {
+    warn(`[context] Invalid deprecated pattern regex: ${pattern}`);
+    return () => false;
+  }
+}
 
 // ============================================================================ 
 // buildContextResult - Assemble final ContextResult output

@@ -79,24 +79,25 @@ function calculateStaleness(bullet: PlaybookBullet): {
  * Generate recommendation based on staleness and score
  */
 function getRecommendation(
+  bulletId: string,
   daysSinceLastFeedback: number,
   score: number,
   maturity: string,
   cli: string
 ): string {
   if (score < -2) {
-    return `Consider using '${cli} forget' - negative score suggests this rule is harmful`;
+    return `Consider: ${cli} forget ${bulletId} --reason "<why>" (negative score suggests harm)`;
   }
   if (daysSinceLastFeedback > 180 && maturity === "candidate") {
-    return "Very stale candidate - consider deprecating if no longer relevant";
+    return `Very stale candidate - consider deprecating if no longer relevant (${cli} playbook remove ${bulletId} --reason "<why>")`;
   }
   if (daysSinceLastFeedback > 120 && score < 1) {
-    return "Stale with low score - review for relevance or deprecate";
+    return `Stale with low score - review for relevance (${cli} playbook get ${bulletId})`;
   }
   if (score > 5) {
     return "Good score despite being stale - may still be valid, review periodically";
   }
-  return "Review for current relevance and update if needed";
+  return `Review for current relevance (${cli} playbook get ${bulletId})`;
 }
 
 export async function staleCommand(
@@ -134,7 +135,7 @@ export async function staleCommand(
           action: staleness.lastAction,
           timestamp: staleness.lastTimestamp
         },
-        recommendation: getRecommendation(staleness.days, score, bullet.maturity || "candidate", cli)
+        recommendation: getRecommendation(bullet.id, staleness.days, score, bullet.maturity || "candidate", cli)
       });
     }
   }
@@ -208,7 +209,7 @@ function printStaleBullets(
   const candidates = bullets.filter(b => b.maturity === "candidate" && b.daysSinceLastFeedback > 90);
 
   if (negative.length > 0) {
-    console.log(chalk.red(`  • ${negative.length} bullets with negative scores - consider '${cli} forget'`));
+    console.log(chalk.red(`  • ${negative.length} bullets with negative scores - consider '${cli} forget <id> --reason \"...\"'`));
   }
   if (veryStale.length > 0) {
     console.log(chalk.yellow(`  • ${veryStale.length} bullets >180 days stale - review for deprecation`));

@@ -1595,7 +1595,8 @@ function buildDeprecatedMatcher(pattern: string): (text: string) => boolean {
   const body = wrappedRegex ? pattern.slice(1, -1) : pattern;
 
   if (!wrappedRegex && !looksLikeRegex) {
-    return (text: string) => text.includes(pattern);
+    const needle = pattern.toLowerCase();
+    return (text: string) => text.toLowerCase().includes(needle);
   }
 
   // ReDoS protection
@@ -1609,7 +1610,7 @@ function buildDeprecatedMatcher(pattern: string): (text: string) => boolean {
   }
 
   try {
-    const regex = new RegExp(body);
+    const regex = new RegExp(body, "i");
     return (text: string) => regex.test(text);
   } catch {
     warn(`[utils] Invalid deprecated pattern regex: ${pattern}`);
