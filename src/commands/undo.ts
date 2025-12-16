@@ -377,9 +377,14 @@ export async function undoCommand(
       const before = undeprecateBullet(bullet);
 
       // Also remove from blocklist(s) so it doesn't get re-blocked on next load
-      await removeFromBlockedLog(bulletId, "~/.cass-memory/blocked.log");
+      await withLock("~/.cass-memory/blocked.log", async () => {
+        await removeFromBlockedLog(bulletId, "~/.cass-memory/blocked.log");
+      });
       if (repoDir) {
-        await removeFromBlockedLog(bulletId, path.join(repoDir, "blocked.log"));
+        const repoBlockedLog = path.join(repoDir, "blocked.log");
+        await withLock(repoBlockedLog, async () => {
+          await removeFromBlockedLog(bulletId, repoBlockedLog);
+        });
       }
 
       await savePlaybook(currentPlaybook, playbookPath);
