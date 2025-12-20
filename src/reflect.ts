@@ -301,7 +301,7 @@ export async function reflectOnSession(
         reason: `Iteration ${i + 1} failed: ${err instanceof Error ? err.message : String(err)}`,
         details: { iteration: i + 1, error: String(err) }
       });
-      log(`Reflection iteration ${i} failed: ${err}`);
+      log(`Reflection iteration ${i + 1} failed: ${err}`);
       break;
     }
   }
