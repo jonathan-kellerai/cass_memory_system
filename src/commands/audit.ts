@@ -7,6 +7,7 @@ import { cassTimeline, type CassRunner } from "../cass.js";
 import { getAvailableProviders, type LLMIO } from "../llm.js";
 import chalk from "chalk";
 import { getCliName, reportError, printJsonResult, validatePositiveInt } from "../utils.js";
+import { iconPrefix } from "../output.js";
 
 export async function auditCommand(
   flags: { days?: number; json?: boolean; trauma?: boolean },
@@ -35,7 +36,7 @@ export async function auditCommand(
     // === TRAUMA SCAN MODE ===
     if (flags.trauma) {
       if (!flags.json) {
-        console.log(chalk.bold.red("\n🔥 PROJECT HOT STOVE: Scanning for past catastrophes..."));
+        console.log(chalk.bold.red(`\n${iconPrefix("warning")}Project Hot Stove: Scanning for past catastrophes...`));
       }
       
       const candidates = await scanForTraumas(config, days, deps.cassRunner);
@@ -60,7 +61,12 @@ export async function auditCommand(
         const preview = c.context.length > 200 ? c.context.slice(0, 200) + "..." : c.context;
         console.log(`  Context:  "${preview.replace(/\n/g, " ")}"`);
       }
-      console.log(chalk.bold("\nTo convert these to scars, use 'cm trauma add' (coming soon)."));
+      console.log(
+        chalk.bold(
+          `\nTo convert a candidate into a scar, use: ${cli} trauma add "<pattern>" --severity CRITICAL --message "..."`
+        )
+      );
+      console.log(chalk.gray(`Tip: bulk import with: ${cli} trauma import <file>`));
       return;
     }
 

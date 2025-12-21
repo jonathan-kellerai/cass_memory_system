@@ -34,7 +34,7 @@ async function promptYesNo(question: string): Promise<boolean> {
 }
 
 async function runTraumaScan(config: Config) {
-  console.log(chalk.bold("\n🔥 Project Hot Stove: Trauma Scan"));
+  console.log(chalk.bold(`\n${iconPrefix("warning")}Project Hot Stove: Trauma Scan`));
   console.log("We can scan your past agent sessions for 'catastrophic' patterns (e.g., apologies followed by destruction).");
   console.log("This will seed your safety guard so you don't repeat past mistakes.\n");
 

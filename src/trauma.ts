@@ -3,7 +3,6 @@ import path from "node:path";
 import {
   TraumaEntry,
   TraumaEntrySchema,
-  TraumaScope,
   Config
 } from "./types.js";
 import {
@@ -12,13 +11,13 @@ import {
   resolveGlobalDir,
   ensureDir,
   fileExists,
+  atomicWrite,
   warn,
   error as logError,
   log
 } from "./utils.js";
 import { cassSearch, cassExport, type CassRunner } from "./cass.js";
-
-// ... existing imports
+import { withLock } from "./lock.js";
 
 const GLOBAL_TRAUMA_FILE = "traumas.jsonl";
 const REPO_TRAUMA_FILE = "traumas.jsonl";
@@ -28,7 +27,6 @@ const REPO_TRAUMA_FILE = "traumas.jsonl";
  * Sourced from simultaneous_launch_button (Project Hot Stove).
  */
 export const DOOM_PATTERNS = [
-  // ... (patterns remain the same) ...
   // Filesystem Destruction
   { pattern: String.raw`^rm\s+(-[rf]+\s+)+/(etc|usr|var|boot|home|root|bin|sbin|lib)`, description: "Recursive deletion of system directories" },
   { pattern: String.raw`^rm\s+(-[rf]+\s+)+/[^t]`, description: "Recursive deletion of root subdirectories" },
@@ -145,7 +143,8 @@ export async function scanForTraumas(
  * Load all trauma entries from global and project scopes.
  * Merges them into a single list.
  */
-export async function loadTraumas(): Promise<TraumaEntry[]> {  const traumas: TraumaEntry[] = [];
+export async function loadTraumas(): Promise<TraumaEntry[]> {
+  const traumas: TraumaEntry[] = [];
 
   // 1. Load Global
   const globalDir = resolveGlobalDir();
@@ -164,19 +163,179 @@ export async function loadTraumas(): Promise<TraumaEntry[]> {  const traumas: Tr
   return traumas;
 }
 
+export type TraumaStatus = TraumaEntry["status"];
+
+async function updateTraumaStatusInFile(
+  filePath: string,
+  traumaId: string,
+  status: TraumaStatus
+): Promise<number> {
+  const expanded = expandPath(filePath);
+  if (!(await fileExists(expanded))) return 0;
+
+  return withLock(expanded, async () => {
+    const content = await fs.readFile(expanded, "utf-8");
+    const rawLines = content.split(/\r?\n/);
+    const outLines: string[] = [];
+    let updated = 0;
+
+    for (const raw of rawLines) {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        outLines.push("");
+        continue;
+      }
+
+      try {
+        const json = JSON.parse(trimmed) as any;
+        if (json && typeof json === "object" && json.id === traumaId) {
+          if (json.status !== status) {
+            json.status = status;
+            updated += 1;
+          }
+          outLines.push(JSON.stringify(json));
+          continue;
+        }
+        outLines.push(trimmed);
+      } catch {
+        // Preserve non-JSON lines verbatim (defensive)
+        outLines.push(raw);
+      }
+    }
+
+    if (updated === 0) return 0;
+
+    // Keep JSONL tidy: remove trailing empty lines, ensure final newline.
+    while (outLines.length > 0 && outLines[outLines.length - 1] === "") outLines.pop();
+    const nextContent = outLines.join("\n") + "\n";
+    await atomicWrite(expanded, nextContent);
+    return updated;
+  });
+}
+
+export async function setTraumaStatusById(
+  traumaId: string,
+  status: TraumaStatus,
+  options: { scope?: "global" | "project" | "all" } = {}
+): Promise<{ updated: number; checkedPaths: string[]; updatedPaths: string[] }> {
+  const scope = options.scope ?? "all";
+  const checkedPaths: string[] = [];
+  const updatedPaths: string[] = [];
+  let updated = 0;
+
+  if (scope === "global" || scope === "all") {
+    const globalPath = path.join(resolveGlobalDir(), GLOBAL_TRAUMA_FILE);
+    checkedPaths.push(globalPath);
+    const n = await updateTraumaStatusInFile(globalPath, traumaId, status);
+    if (n > 0) updatedPaths.push(globalPath);
+    updated += n;
+  }
+
+  if (scope === "project" || scope === "all") {
+    const repoDir = await resolveRepoDir();
+    if (repoDir) {
+      const repoPath = path.join(repoDir, REPO_TRAUMA_FILE);
+      checkedPaths.push(repoPath);
+      const n = await updateTraumaStatusInFile(repoPath, traumaId, status);
+      if (n > 0) updatedPaths.push(repoPath);
+      updated += n;
+    }
+  }
+
+  return { updated, checkedPaths, updatedPaths };
+}
+
+export async function healTraumaById(
+  traumaId: string,
+  options: { scope?: "global" | "project" | "all" } = {}
+): Promise<{ updated: number; checkedPaths: string[]; updatedPaths: string[] }> {
+  return setTraumaStatusById(traumaId, "healed", options);
+}
+
+async function removeTraumaFromFile(filePath: string, traumaId: string): Promise<number> {
+  const expanded = expandPath(filePath);
+  if (!(await fileExists(expanded))) return 0;
+
+  return withLock(expanded, async () => {
+    const content = await fs.readFile(expanded, "utf-8");
+    const rawLines = content.split(/\r?\n/);
+    const outLines: string[] = [];
+    let removed = 0;
+
+    for (const raw of rawLines) {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        outLines.push("");
+        continue;
+      }
+
+      try {
+        const json = JSON.parse(trimmed) as any;
+        if (json && typeof json === "object" && json.id === traumaId) {
+          removed += 1;
+          continue;
+        }
+        outLines.push(trimmed);
+      } catch {
+        // Preserve non-JSON lines verbatim (defensive)
+        outLines.push(raw);
+      }
+    }
+
+    if (removed === 0) return 0;
+
+    // Keep JSONL tidy: remove trailing empty lines, ensure final newline.
+    while (outLines.length > 0 && outLines[outLines.length - 1] === "") outLines.pop();
+    const nextContent = outLines.length === 0 ? "" : outLines.join("\n") + "\n";
+    await atomicWrite(expanded, nextContent);
+    return removed;
+  });
+}
+
+export async function removeTraumaById(
+  traumaId: string,
+  options: { scope?: "global" | "project" | "all" } = {}
+): Promise<{ removed: number; checkedPaths: string[]; updatedPaths: string[] }> {
+  const scope = options.scope ?? "all";
+  const checkedPaths: string[] = [];
+  const updatedPaths: string[] = [];
+  let removed = 0;
+
+  if (scope === "global" || scope === "all") {
+    const globalPath = path.join(resolveGlobalDir(), GLOBAL_TRAUMA_FILE);
+    checkedPaths.push(globalPath);
+    const n = await removeTraumaFromFile(globalPath, traumaId);
+    if (n > 0) updatedPaths.push(globalPath);
+    removed += n;
+  }
+
+  if (scope === "project" || scope === "all") {
+    const repoDir = await resolveRepoDir();
+    if (repoDir) {
+      const repoPath = path.join(repoDir, REPO_TRAUMA_FILE);
+      checkedPaths.push(repoPath);
+      const n = await removeTraumaFromFile(repoPath, traumaId);
+      if (n > 0) updatedPaths.push(repoPath);
+      removed += n;
+    }
+  }
+
+  return { removed, checkedPaths, updatedPaths };
+}
+
 /**
  * Load traumas from a specific file path.
  * Returns empty array if file doesn't exist or is invalid.
  */
 async function loadTraumasFromFile(filePath: string): Promise<TraumaEntry[]> {
-  if (!await fileExists(filePath)) {
+  if (!(await fileExists(filePath))) {
     return [];
   }
 
   try {
     const content = await fs.readFile(expandPath(filePath), "utf-8");
-    const lines = content.split("\n").filter(line => line.trim());
-    
+    const lines = content.split(/\r?\n/).filter((line) => line.trim());
+
     const entries: TraumaEntry[] = [];
     for (const line of lines) {
       try {
@@ -211,21 +370,23 @@ export async function saveTrauma(entry: TraumaEntry): Promise<void> {
   } else {
     // Project scope
     if (!entry.projectPath) {
-        // Fallback to current repo if not specified
-        const repoDir = await resolveRepoDir();
-        if (!repoDir) {
-            throw new Error("Cannot save project-scoped trauma: not in a git repository");
-        }
-        targetPath = path.join(repoDir, REPO_TRAUMA_FILE);
+      // Fallback to current repo if not specified
+      const repoDir = await resolveRepoDir();
+      if (!repoDir) {
+        throw new Error("Cannot save project-scoped trauma: not in a git repository");
+      }
+      targetPath = path.join(repoDir, REPO_TRAUMA_FILE);
     } else {
-         // Use specified project path (.cass folder)
-         targetPath = path.join(entry.projectPath, ".cass", REPO_TRAUMA_FILE);
+      // Use specified project root path (we will write under <root>/.cass/)
+      targetPath = path.join(entry.projectPath, ".cass", REPO_TRAUMA_FILE);
     }
     await ensureDir(path.dirname(targetPath));
   }
 
   const line = JSON.stringify(entry) + "\n";
-  await fs.appendFile(expandPath(targetPath), line, "utf-8");
+  await withLock(targetPath, async () => {
+    await fs.appendFile(expandPath(targetPath), line, "utf-8");
+  });
 }
 
 /**
@@ -233,15 +394,15 @@ export async function saveTrauma(entry: TraumaEntry): Promise<void> {
  * Returns the matching entry if found, null otherwise.
  */
 export function findMatchingTrauma(command: string, traumas: TraumaEntry[]): TraumaEntry | null {
-  const activeTraumas = traumas.filter(t => t.status === "active");
-  
+  const activeTraumas = traumas.filter((t) => t.status === "active");
+
   for (const trauma of activeTraumas) {
     try {
       const regex = new RegExp(trauma.pattern, "i");
       if (regex.test(command)) {
         return trauma;
       }
-    } catch (e) {
+    } catch {
       warn(`[trauma] Invalid regex pattern in trauma ${trauma.id}: ${trauma.pattern}`);
     }
   }

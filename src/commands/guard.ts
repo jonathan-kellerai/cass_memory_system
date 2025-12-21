@@ -6,6 +6,7 @@ import {
   ensureDir, 
   fileExists, 
   getCliName, 
+  printJsonResult,
   reportError 
 } from "../utils.js";
 import { ErrorCode } from "../types.js";
@@ -13,6 +14,7 @@ import { ErrorCode } from "../types.js";
 export async function guardCommand(flags: { install?: boolean; json?: boolean }) {
   const startedAtMs = Date.now();
   const command = "guard";
+  const cli = getCliName();
 
   try {
     if (flags.install) {
@@ -20,7 +22,14 @@ export async function guardCommand(flags: { install?: boolean; json?: boolean })
       return;
     }
 
-    console.log("Usage: cm guard --install");
+    reportError("Missing required flag: --install", {
+      code: ErrorCode.MISSING_REQUIRED,
+      hint: `Example: ${cli} guard --install --json`,
+      details: { missing: "--install" },
+      json: flags.json,
+      command,
+      startedAtMs,
+    });
   } catch (err: any) {
     reportError(err instanceof Error ? err : String(err), {
       code: ErrorCode.INTERNAL_ERROR,
@@ -32,6 +41,9 @@ export async function guardCommand(flags: { install?: boolean; json?: boolean })
 }
 
 export async function installGuard(json?: boolean, silent?: boolean) {
+  const startedAtMs = Date.now();
+  const command = "guard";
+  const cli = getCliName();
   const claudeDir = ".claude";
   const hooksDir = path.join(claudeDir, "hooks");
   const settingsPath = path.join(claudeDir, "settings.json");
@@ -40,14 +52,15 @@ export async function installGuard(json?: boolean, silent?: boolean) {
 
   // 1. Ensure directories
   if (!(await fileExists(claudeDir))) {
-    if (json) {
-      console.log(JSON.stringify({ success: false, error: "No .claude directory found. Is this a Claude Code project?" }));
-      return;
-    }
-    if (!silent) {
-      console.error(chalk.red("Error: No .claude directory found."));
-      console.error("Run this command from the root of a project managed by Claude Code.");
-    }
+    if (silent) return;
+    reportError("No .claude directory found. Is this a Claude Code project?", {
+      code: ErrorCode.FILE_NOT_FOUND,
+      hint: `Run this command from a project root that contains a .claude directory.`,
+      details: { missing: ".claude" },
+      json,
+      command,
+      startedAtMs,
+    });
     return;
   }
 
@@ -64,32 +77,47 @@ export async function installGuard(json?: boolean, silent?: boolean) {
       settings = JSON.parse(content);
     } catch (e) {
       const msg = "Error: Could not parse .claude/settings.json (invalid JSON or comments). Aborting to prevent data loss.";
-      if (json) {
-        console.log(JSON.stringify({ success: false, error: msg }));
-        return;
-      }
       if (!silent) {
-        console.error(chalk.red(msg));
-        console.error("Please manually add this hook to 'PreToolUse':");
-        console.log(JSON.stringify({
-          matcher: "Bash",
-          hooks: [{ type: "command", command: `$CLAUDE_PROJECT_DIR/.claude/hooks/${scriptName}` }]
-        }, null, 2));
+        reportError(msg, {
+          code: ErrorCode.CONFIG_INVALID,
+          hint: `Fix ${settingsPath} (must be strict JSON), then re-run: ${cli} guard --install`,
+          details: { path: settingsPath },
+          json,
+          command,
+          startedAtMs,
+        });
+        if (!json) {
+          console.error("Please manually add this hook to 'PreToolUse':");
+          console.log(
+            JSON.stringify(
+              {
+                matcher: "Bash",
+                hooks: [{ type: "command", command: `$CLAUDE_PROJECT_DIR/.claude/hooks/${scriptName}` }],
+              },
+              null,
+              2
+            )
+          );
+        }
       }
       return;
     }
   }
 
-  // Ensure hooks structure
-  settings.hooks = settings.hooks || {};
-  settings.hooks.PreToolUse = settings.hooks.PreToolUse || [];
+  // Ensure hooks structure (defensive: settings.json is user-owned)
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) settings = {};
+  if (!settings.hooks || typeof settings.hooks !== "object" || Array.isArray(settings.hooks)) settings.hooks = {};
+  if (!Array.isArray(settings.hooks.PreToolUse)) settings.hooks.PreToolUse = [];
 
   // Check if already installed
-  const existingIdx = settings.hooks.PreToolUse.findIndex((h: any) => 
-    h.hooks && h.hooks.some((cmd: any) => cmd.command?.includes(scriptName))
-  );
+  const alreadyInstalled = (settings.hooks.PreToolUse as any[]).some((entry: any) => {
+    if (!entry || typeof entry !== "object") return false;
+    const hooks = (entry as any).hooks;
+    if (!Array.isArray(hooks)) return false;
+    return hooks.some((hook: any) => typeof hook?.command === "string" && hook.command.includes(scriptName));
+  });
 
-  if (existingIdx === -1) {
+  if (!alreadyInstalled) {
     // Add hook
     settings.hooks.PreToolUse.push({
       matcher: "Bash",
@@ -107,10 +135,19 @@ export async function installGuard(json?: boolean, silent?: boolean) {
   if (silent) return;
 
   if (json) {
-    console.log(JSON.stringify({ success: true, message: "Trauma guard installed successfully." }));
+    printJsonResult(
+      command,
+      {
+        message: alreadyInstalled ? "Trauma guard already installed." : "Trauma guard installed successfully.",
+        alreadyInstalled,
+        scriptPath,
+        settingsPath,
+      },
+      { startedAtMs }
+    );
   } else {
     console.log(chalk.green(`✓ Installed ${scriptName} to ${hooksDir}`));
-    console.log(chalk.green(`✓ Updated ${settingsPath}`));
+    console.log(chalk.green(`✓ ${alreadyInstalled ? "Verified" : "Updated"} ${settingsPath}`));
     console.log(chalk.bold.yellow("\nIMPORTANT: You must restart Claude Code for the hook to take effect."));
   }
 }

@@ -32,7 +32,7 @@ def load_traumas():
                     if line.strip():
                         try:
                             t = json.loads(line)
-                            if t.get("status") == "active":
+                            if isinstance(t, dict) and t.get("status") == "active":
                                 traumas.append(t)
                         except:
                             pass
@@ -50,7 +50,7 @@ def load_traumas():
                         if line.strip():
                             try:
                                 t = json.loads(line)
-                                if t.get("status") == "active":
+                                if isinstance(t, dict) and t.get("status") == "active":
                                     traumas.append(t)
                             except:
                                 pass
@@ -62,8 +62,11 @@ def load_traumas():
 def check_command(command, traumas):
     """Check command against trauma patterns."""
     for trauma in traumas:
+        if not isinstance(trauma, dict):
+            continue
+
         pattern = trauma.get("pattern")
-        if not pattern:
+        if not isinstance(pattern, str) or not pattern:
             continue
             
         try:
@@ -82,21 +85,40 @@ def main():
         # Not a JSON hook input, ignore
         sys.exit(0)
 
+    if not isinstance(input_data, dict):
+        # Fail open if the hook input isn't the expected object shape
+        sys.exit(0)
+
     # Extract command
     # Claude Code format: {"tool_name": "Bash", "tool_input": {"command": "..."}}
     tool_name = input_data.get("tool_name")
-    tool_input = input_data.get("tool_input", {})
+    tool_input = input_data.get("tool_input") or {}
+    if not isinstance(tool_input, dict):
+        sys.exit(0)
     command = tool_input.get("command")
 
     # Only check Bash commands
-    if tool_name != "Bash" or not command:
+    if tool_name != "Bash" or not isinstance(command, str) or not command:
         sys.exit(0)
 
     traumas = load_traumas()
     match = check_command(command, traumas)
 
     if match:
-        msg = match["trigger_event"].get("human_message") or "You previously caused a catastrophe with this command."
+        trigger = match.get("trigger_event")
+        if not isinstance(trigger, dict):
+            trigger = {}
+        msg = trigger.get("human_message") or "You previously caused a catastrophe with this command."
+        ref = trigger.get("session_path") or "unknown"
+        pattern = match.get("pattern") or "<unknown>"
+        trauma_id = match.get("id") or "<unknown>"
+
+        use_emoji = os.environ.get("CASS_MEMORY_NO_EMOJI") is None
+        banner = (
+            "🔥 HOT STOVE: VISCERAL SAFETY INTERVENTION 🔥"
+            if use_emoji
+            else "[HOT STOVE] VISCERAL SAFETY INTERVENTION"
+        )
         
         # Deny the command
         output = {
@@ -104,12 +126,12 @@ def main():
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": (
-                    f"🔥 HOT STOVE: VISCERAL SAFETY INTERVENTION 🔥\n\n"
+                    f"{banner}\n\n"
                     f"BLOCKED: This pattern matches a registered TRAUMA.\n"
-                    f"Pattern: {match['pattern']}\n"
+                    f"Pattern: {pattern}\n"
                     f"Reason: {msg}\n"
-                    f"Reference: {match['trigger_event'].get('session_path', 'unknown')}\n\n"
-                    f"If you MUST run this, use 'cm trauma remove {match['id']}' to heal the scar first."
+                    f"Reference: {ref}\n\n"
+                    f"If you MUST run this, heal it first with: cm trauma heal {trauma_id}"
                 )
             }
         }
