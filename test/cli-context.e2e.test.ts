@@ -418,7 +418,7 @@ describe("E2E: CLI context command", () => {
   });
 
   describe("Limits and Constraints", () => {
-    it("respects --top flag for bullet limit", async () => {
+    it("respects limit for bullet limit", async () => {
       await withTempCassHome(async (env) => {
         const bullets = Array.from({ length: 20 }, (_, i) =>
           createTestBullet({
@@ -433,7 +433,7 @@ describe("E2E: CLI context command", () => {
         const playbook = createTestPlaybook(bullets);
         await writeFile(env.playbookPath, yaml.stringify(playbook));
 
-        const { result } = await generateContextResult("build API", { top: 3 });
+        const { result } = await generateContextResult("build API", { limit: 3 });
 
         expect(result.relevantBullets.length).toBeLessThanOrEqual(3);
       });

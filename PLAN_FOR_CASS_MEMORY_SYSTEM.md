@@ -640,7 +640,7 @@ cm playbook stats
 cm project --format agents.md --output ./AGENTS.md
 
 # Top N per category
-cm project --format claude.md --top 10
+cm project --format claude.md --per-category 10
 
 # Include helpful counts
 cm project --show-counts

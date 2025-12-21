@@ -3,7 +3,7 @@
  *
  * Covers:
  * - Export formats (agents.md, claude.md, raw)
- * - --top + --showCounts behavior
+ * - --per-category + --showCounts behavior
  * - Safe overwrite guard for --output
  */
 import { describe, test, expect } from "bun:test";
@@ -77,7 +77,7 @@ type JsonEnvelope<T> = {
 };
 
 describe("project command - Unit Tests", () => {
-  test("exports agents.md with --top and --showCounts=false", async () => {
+  test("exports agents.md with --per-category and --showCounts=false", async () => {
     await withEnvAsync({ CASS_MEMORY_CLI_NAME: "cm" }, async () => {
       await withTempCassHome(async (env) => {
         await withCwd(env.home, async () => {
@@ -96,7 +96,7 @@ describe("project command - Unit Tests", () => {
           const lo = createTestBullet({
             id: "b-project-lo",
             category: "Testing",
-            content: "This lower-ranked rule should be filtered by --top 1.",
+            content: "This lower-ranked rule should be filtered by --per-category 1.",
             state: "active",
             helpfulCount: 1,
             harmfulCount: 0,
@@ -115,7 +115,7 @@ describe("project command - Unit Tests", () => {
 
           process.exitCode = 0;
           const { output } = await captureConsoleLog(() =>
-            projectCommand({ json: true, format: "agents.md", top: 1, showCounts: false })
+            projectCommand({ json: true, format: "agents.md", perCategory: 1, showCounts: false })
           );
 
           const payload = JSON.parse(output) as JsonEnvelope<{ format: string; content: string }>;
@@ -153,7 +153,7 @@ describe("project command - Unit Tests", () => {
 
         process.exitCode = 0;
         const { output } = await captureConsoleLog(() =>
-          projectCommand({ json: true, format: "claude.md", top: 10 })
+          projectCommand({ json: true, format: "claude.md", perCategory: 10 })
         );
 
         const payload = JSON.parse(output) as JsonEnvelope<{ format: string; content: string }>;
@@ -224,11 +224,13 @@ describe("project command - Unit Tests", () => {
     expect(process.exitCode).toBe(2);
 
     process.exitCode = 0;
-    const badTop = await captureConsoleLog(() => projectCommand({ json: true, format: "agents.md", top: 0 }));
-    const badTopPayload = JSON.parse(badTop.output) as any;
-    expect(badTopPayload.success).toBe(false);
-    expect(badTopPayload.command).toBe("project");
-    expect(badTopPayload.error.code).toBe("INVALID_INPUT");
+    const badPerCategory = await captureConsoleLog(() =>
+      projectCommand({ json: true, format: "agents.md", perCategory: 0 })
+    );
+    const badPerCategoryPayload = JSON.parse(badPerCategory.output) as any;
+    expect(badPerCategoryPayload.success).toBe(false);
+    expect(badPerCategoryPayload.command).toBe("project");
+    expect(badPerCategoryPayload.error.code).toBe("INVALID_INPUT");
     expect(process.exitCode).toBe(2);
 
     process.exitCode = 0;

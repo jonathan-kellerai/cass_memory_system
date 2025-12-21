@@ -84,11 +84,11 @@ export function buildContextResult(
   history: CassSearchHit[],
   warnings: string[],
   suggestedQueries: string[],
-  config: Config
+  limits: { maxBullets: number; maxHistory: number }
 ): ContextResult {
   // Apply size limits
-  const maxBullets = config.maxBulletsInContext || 10;
-  const maxHistory = config.maxHistoryInContext || 10;
+  const maxBullets = Number.isFinite(limits.maxBullets) && limits.maxBullets > 0 ? limits.maxBullets : 10;
+  const maxHistory = Number.isFinite(limits.maxHistory) && limits.maxHistory > 0 ? limits.maxHistory : 10;
 
   // Transform rules with additional metadata for LLM consumption
   const relevantBullets = rules.slice(0, maxBullets).map(b => ({
@@ -122,6 +122,7 @@ export function buildContextResult(
 
 export interface ContextFlags {
   json?: boolean;
+  limit?: number;
   top?: number;
   history?: number;
   days?: number;
@@ -298,9 +299,10 @@ export async function generateContextResult(
       : undefined,
   });
 
+  const maxBullets = flags.limit ?? flags.top ?? config.maxBulletsInContext;
   const topBullets = scoredBullets
     .filter(b => (b.finalScore || 0) > 0)
-    .slice(0, flags.top ?? config.maxBulletsInContext);
+    .slice(0, maxBullets);
 
   const rules = topBullets.filter(b => !b.isNegative && b.kind !== "anti_pattern");
   const antiPatterns = topBullets.filter(b => b.isNegative || b.kind === "anti_pattern");
@@ -351,7 +353,10 @@ export async function generateContextResult(
     cassHits,
     warnings,
     suggestedQueries,
-    config
+    {
+      maxBullets: flags.limit ?? flags.top ?? config.maxBulletsInContext,
+      maxHistory: flags.history ?? config.maxHistoryInContext,
+    }
   );
   if (degraded) {
     result.degraded = degraded;
@@ -534,7 +539,12 @@ export async function contextCommand(
       const ref = traumaMatch.trigger_event.session_path;
       
       // VISCERAL SCREAM TO STDERR (Always visible)
-      console.error(chalk.bgRed.white.bold("\n🚨🚨🚨 CRITICAL WARNING: VISCERAL SAFETY INTERVENTION 🚨🚨🚨"));
+      const mark = iconPrefix("warning").trim();
+      const marks = mark ? mark.repeat(3) : "";
+      const banner = marks
+        ? `${marks} CRITICAL WARNING: VISCERAL SAFETY INTERVENTION ${marks}`
+        : "CRITICAL WARNING: VISCERAL SAFETY INTERVENTION";
+      console.error(chalk.bgRed.white.bold(`\n${banner}`));
       console.error(chalk.red.bold(`You are inquiring about a pattern that has previously caused TRAUMA.`));
       console.error(chalk.red(`Pattern: ${traumaMatch.pattern}`));
       console.error(chalk.red(`Reason:  ${msg}`));
@@ -551,17 +561,38 @@ export async function contextCommand(
     // Non-blocking
   }
 
-  const topCheck = validatePositiveInt(flags.top, "top", { min: 1, allowUndefined: true });
-  if (!topCheck.ok) {
-    reportError(topCheck.message, {
+  const limitCheck = validatePositiveInt(flags.limit, "limit", { min: 1, allowUndefined: true });
+  if (!limitCheck.ok) {
+    reportError(limitCheck.message, {
       code: ErrorCode.INVALID_INPUT,
-      details: topCheck.details,
-      hint: `Example: ${cli} context \"<task>\" --top 10 --json`,
+      details: limitCheck.details,
+      hint: `Example: ${cli} context \"<task>\" --limit 10 --json`,
       json: wantsJsonForErrors,
       command,
       startedAtMs,
     });
     return;
+  }
+
+  const topCheck = validatePositiveInt(flags.top, "top", { min: 1, allowUndefined: true });
+  if (!topCheck.ok) {
+    reportError(topCheck.message, {
+      code: ErrorCode.INVALID_INPUT,
+      details: topCheck.details,
+      hint: `Example: ${cli} context \"<task>\" --limit 10 --json`,
+      json: wantsJsonForErrors,
+      command,
+      startedAtMs,
+    });
+    return;
+  }
+
+  if (topCheck.value !== undefined) {
+    if (limitCheck.value !== undefined) {
+      warn("[context] Ignoring deprecated --top because --limit was also provided.");
+    } else {
+      warn("[context] --top is deprecated; use --limit.");
+    }
   }
 
   const historyCheck = validatePositiveInt(flags.history, "history", { min: 1, allowUndefined: true });
@@ -634,7 +665,7 @@ export async function contextCommand(
 
   const normalizedFlags: ContextFlags = {
     ...flags,
-    ...(topCheck.value !== undefined ? { top: topCheck.value } : {}),
+    ...((limitCheck.value ?? topCheck.value) !== undefined ? { limit: limitCheck.value ?? topCheck.value } : {}),
     ...(historyCheck.value !== undefined ? { history: historyCheck.value } : {}),
     ...(daysCheck.value !== undefined ? { days: daysCheck.value } : {}),
     ...(formatCheck.value !== undefined ? { format: formatCheck.value } : {}),

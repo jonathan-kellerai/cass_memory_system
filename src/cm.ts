@@ -80,7 +80,8 @@ program.command("context")
   .argument("<task>", "Description of the task to perform")
   .option("-j, --json", "Output JSON")
   .option("--workspace <path>", "Filter by workspace")
-  .option("--top <n>", "Number of rules to show", toInt)
+  .option("--limit <n>", "Number of rules to show", toInt)
+  .option("--top <n>", "DEPRECATED: use --limit", toInt)
   .option("--history <n>", "Number of history snippets", toInt)
   .option("--days <n>", "Lookback days for history", toInt)
   .option("--format <markdown|json>", "Force output format (overrides --json)")
@@ -89,7 +90,7 @@ program.command("context")
   .addHelpText("after", () =>
     formatCommandExamples([
       "context \"implement user authentication\" --json",
-      "context \"fix the login bug\" --top 10 --days 30 --json",
+      "context \"fix the login bug\" --limit 10 --days 30 --json",
       "context \"refactor utils\" --workspace . --json",
       "context \"write tests\" --format markdown",
     ])
@@ -475,12 +476,15 @@ program.command("forget")
 program.command("audit")
   .description("Audit recent sessions against playbook rules")
   .option("--days <n>", "Lookback days for sessions", toInt)
+  .option("--trauma", "Scan cass history for catastrophic patterns (Project Hot Stove)")
   .option("-j, --json", "Output JSON")
   .addHelpText("after", () =>
     formatCommandExamples([
       "audit --days 30",
       "audit --days 14 --json",
       "audit --json",
+      "audit --trauma --days 90",
+      "audit --trauma --days 30 --json",
     ])
   )
   .action(async (opts: any) => await auditCommand(opts));
@@ -491,7 +495,8 @@ program.command("project")
   .option("--format <fmt>", "Output format: agents.md, claude.md, raw, yaml, json", "agents.md")
   .option("--output <path>", "Write to file instead of stdout")
   .option("--force", "Overwrite existing output file")
-  .option("--top <n>", "Limit rules per category", toInt)
+  .option("--per-category <n>", "Limit rules per category", toInt)
+  .option("--top <n>", "DEPRECATED: use --per-category", toInt)
   .option("--no-show-counts", "Omit helpful/harmful counts in output")
   .option("-j, --json", "Output JSON")
   .addHelpText("after", () =>
@@ -794,6 +799,9 @@ const trauma = program.command("trauma")
     formatCommandExamples([
       "trauma list",
       "trauma add \"^rm -rf\" --severity FATAL",
+      "trauma heal trauma-abc123",
+      "trauma remove trauma-abc123 --force",
+      "trauma import ./traumas.txt --scope global",
     ])
   );
 
@@ -811,6 +819,32 @@ trauma.command("add")
   .option("--message <msg>", "Human-readable reason")
   .option("-j, --json", "Output JSON")
   .action(async (pattern: string, opts: any) => await traumaCommand("add", [pattern], opts));
+
+trauma.command("heal")
+  .description("Heal (disable) a trauma by id")
+  .argument("<id>", "Trauma id (e.g., trauma-abc123)")
+  .option("--scope <scope>", "global | project | all", "all")
+  .option("-j, --json", "Output JSON")
+  .action(async (id: string, opts: any) => await traumaCommand("heal", [id], opts));
+
+trauma.command("remove")
+  .alias("rm")
+  .description("Remove a trauma entry by id (requires --force)")
+  .argument("<id>", "Trauma id (e.g., trauma-abc123)")
+  .option("--scope <scope>", "global | project | all", "all")
+  .option("--force", "Required: confirm removal")
+  .option("--yes", "Skip interactive confirmation (still requires --force)")
+  .option("-j, --json", "Output JSON")
+  .action(async (id: string, opts: any) => await traumaCommand("remove", [id], opts));
+
+trauma.command("import")
+  .description("Bulk import trauma patterns/entries from a file")
+  .argument("<file>", "Path to a file containing patterns or JSONL entries")
+  .option("--scope <scope>", "global or project", "global")
+  .option("--severity <level>", "CRITICAL or FATAL (default: CRITICAL)", "CRITICAL")
+  .option("--message <msg>", "Human-readable reason (applied to imported entries)")
+  .option("-j, --json", "Output JSON")
+  .action(async (file: string, opts: any) => await traumaCommand("import", [file], opts));
 
 program.showSuggestionAfterError(true);
 if (!hasJsonFlag(argv)) {

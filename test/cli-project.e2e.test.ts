@@ -72,8 +72,8 @@ async function withCwd<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
 }
 
 describe("E2E: CLI project command", () => {
-  it.serial("exports agents.md format and applies --top per category", async () => {
-    const log = createE2ELogger("cli-project: agents.md + top");
+  it.serial("exports agents.md format and applies --per-category per category", async () => {
+    const log = createE2ELogger("cli-project: agents.md + per-category");
     log.setRepro("bun test test/cli-project.e2e.test.ts");
 
     await log.run(async () => {
@@ -92,7 +92,7 @@ describe("E2E: CLI project command", () => {
         const bulletSecurityLow = createBullet({
           id: "b-proj-sec-low",
           category: "security",
-          content: "Low-score security rule (should be excluded by --top 1).",
+          content: "Low-score security rule (should be excluded by --per-category 1).",
           maturity: "established",
           feedbackEvents: [],
         });
@@ -107,7 +107,7 @@ describe("E2E: CLI project command", () => {
         const bulletTestingLow = createBullet({
           id: "b-proj-test-low",
           category: "testing",
-          content: "Low-score testing rule (should be excluded by --top 1).",
+          content: "Low-score testing rule (should be excluded by --per-category 1).",
           maturity: "established",
           feedbackEvents: [],
         });
@@ -122,8 +122,8 @@ describe("E2E: CLI project command", () => {
         try {
           await withNoColor(async () => {
             await withCwd(env.home, async () => {
-              log.step("Run command", { command: "cm project --format agents.md --top 1 --json" });
-              await projectCommand({ format: "agents.md", top: 1, json: true });
+              log.step("Run command", { command: "cm project --format agents.md --per-category 1 --json" });
+              await projectCommand({ format: "agents.md", perCategory: 1, json: true });
             });
           });
         } finally {
@@ -148,15 +148,15 @@ describe("E2E: CLI project command", () => {
         expect(content).toContain("### testing");
 
         expect(content).toContain("Use prepared statements for SQL queries.");
-        expect(content).not.toContain("Low-score security rule (should be excluded by --top 1).");
+        expect(content).not.toContain("Low-score security rule (should be excluded by --per-category 1).");
         expect(content).toContain("Keep tests deterministic and offline.");
-        expect(content).not.toContain("Low-score testing rule (should be excluded by --top 1).");
+        expect(content).not.toContain("Low-score testing rule (should be excluded by --per-category 1).");
       });
     });
   });
 
-  it.serial("exports claude.md format and applies --top per category", async () => {
-    const log = createE2ELogger("cli-project: claude.md + top");
+  it.serial("exports claude.md format and applies --per-category per category", async () => {
+    const log = createE2ELogger("cli-project: claude.md + per-category");
     log.setRepro("bun test test/cli-project.e2e.test.ts");
 
     await log.run(async () => {
@@ -175,7 +175,7 @@ describe("E2E: CLI project command", () => {
         const bulletB = createBullet({
           id: "b-proj-claude-b",
           category: "security",
-          content: "Second security rule (excluded by --top 1).",
+          content: "Second security rule (excluded by --per-category 1).",
           maturity: "established",
           feedbackEvents: [],
         });
@@ -190,8 +190,8 @@ describe("E2E: CLI project command", () => {
         try {
           await withNoColor(async () => {
             await withCwd(env.home, async () => {
-              log.step("Run command", { command: "cm project --format claude.md --top 1 --json" });
-              await projectCommand({ format: "claude.md", top: 1, json: true });
+              log.step("Run command", { command: "cm project --format claude.md --per-category 1 --json" });
+              await projectCommand({ format: "claude.md", perCategory: 1, json: true });
             });
           });
         } finally {
@@ -212,7 +212,7 @@ describe("E2E: CLI project command", () => {
         expect(content).toContain("</project_rules>");
         expect(content).toContain("## security");
         expect(content).toContain("Validate JWTs before trusting claims.");
-        expect(content).not.toContain("Second security rule (excluded by --top 1).");
+        expect(content).not.toContain("Second security rule (excluded by --per-category 1).");
       });
     });
   });

@@ -10,6 +10,7 @@ import {
   atomicWrite,
   reportError,
   printJsonResult,
+  warn,
   validateNonEmptyString,
   validateOneOf,
   validatePositiveInt,
@@ -19,7 +20,7 @@ import chalk from "chalk";
 import { icon } from "../output.js";
 
 export async function projectCommand(
-  flags: { output?: string; force?: boolean; format?: string; top?: number; showCounts?: boolean; json?: boolean }
+  flags: { output?: string; force?: boolean; format?: string; perCategory?: number; top?: number; showCounts?: boolean; json?: boolean }
 ) {
   const startedAtMs = Date.now();
   const command = "project";
@@ -42,17 +43,38 @@ export async function projectCommand(
     return;
   }
 
-  const topCheck = validatePositiveInt(flags.top, "top", { min: 1, allowUndefined: true });
-  if (!topCheck.ok) {
-    reportError(topCheck.message, {
+  const perCategoryCheck = validatePositiveInt(flags.perCategory, "per-category", { min: 1, allowUndefined: true });
+  if (!perCategoryCheck.ok) {
+    reportError(perCategoryCheck.message, {
       code: ErrorCode.INVALID_INPUT,
-      details: topCheck.details,
-      hint: `Example: ${cli} project --top 5 --format agents.md`,
+      details: perCategoryCheck.details,
+      hint: `Example: ${cli} project --per-category 5 --format agents.md`,
       json: flags.json,
       command,
       startedAtMs,
     });
     return;
+  }
+
+  const topCheck = validatePositiveInt(flags.top, "top", { min: 1, allowUndefined: true });
+  if (!topCheck.ok) {
+    reportError(topCheck.message, {
+      code: ErrorCode.INVALID_INPUT,
+      details: topCheck.details,
+      hint: `Example: ${cli} project --per-category 5 --format agents.md`,
+      json: flags.json,
+      command,
+      startedAtMs,
+    });
+    return;
+  }
+
+  if (topCheck.value !== undefined) {
+    if (perCategoryCheck.value !== undefined) {
+      warn("[project] Ignoring deprecated --top because --per-category was also provided.");
+    } else {
+      warn("[project] --top is deprecated; use --per-category.");
+    }
   }
 
   const outputCheck = validateNonEmptyString(flags.output, "output", { allowUndefined: true });
@@ -73,6 +95,8 @@ export async function projectCommand(
     const playbook = await loadMergedPlaybook(config);
     const showCounts = flags.showCounts !== false; // default true
 
+    const topN = perCategoryCheck.value ?? topCheck.value;
+
     let output = "";
 
     const format = formatCheck.value;
@@ -89,7 +113,7 @@ export async function projectCommand(
       case "claude.md":
       case "claude":
         output = exportToClaudeMd(playbook, config, {
-          topN: topCheck.value,
+          topN,
           showCounts
         });
         break;
@@ -97,7 +121,7 @@ export async function projectCommand(
       case "agents":
       default:
         output = exportToAgentsMd(playbook, config, {
-          topN: topCheck.value,
+          topN,
           showCounts
         });
         break;
