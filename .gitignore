@@ -101,3 +101,6 @@ htmlcov/
 # Node.js / Bun
 node_modules/
 tsconfig.tsbuildinfo
+
+# bv (beads viewer) local config and caches
+.bv/

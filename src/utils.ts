@@ -1242,14 +1242,70 @@ export async function atomicWrite(filePath: string, content: string): Promise<vo
   const expanded = typeof expandPath === "function" ? expandPath(filePath) : path.resolve(filePath);
   await ensureDir(path.dirname(expanded));
   
-  const tempPath = `${expanded}.tmp.${crypto.randomBytes(4).toString("hex")}`;
+  const tempPath = `${expanded}.tmp.${crypto.randomBytes(8).toString("hex")}`;
+  const backupPath = `${expanded}.bak.${crypto.randomBytes(8).toString("hex")}`;
   
   try {
     await fs.writeFile(tempPath, content, { encoding: "utf-8", mode: 0o600 });
-    await fs.rename(tempPath, expanded);
+
+    // POSIX rename replaces atomically, but Windows may fail when the destination exists.
+    try {
+      await fs.rename(tempPath, expanded);
+      return;
+    } catch (err: any) {
+      const code = err?.code;
+      const maybeWindowsReplaceIssue =
+        process.platform === "win32" && (code === "EEXIST" || code === "EPERM" || code === "EACCES");
+      if (!maybeWindowsReplaceIssue) {
+        throw err;
+      }
+
+      // Windows-safe replacement strategy:
+      // 1) Rename existing destination to a unique backup path (best effort).
+      // 2) Rename temp -> destination.
+      // 3) Delete backup (best effort).
+      let backedUp = false;
+      try {
+        await fs.rename(expanded, backupPath);
+        backedUp = true;
+      } catch (backupErr: any) {
+        // If destination doesn't exist, we can still proceed.
+        if (backupErr?.code !== "ENOENT") {
+          throw backupErr;
+        }
+      }
+
+      try {
+        await fs.rename(tempPath, expanded);
+      } catch (replaceErr: any) {
+        // Best-effort rollback if we moved the original aside and destination wasn't created.
+        if (backedUp) {
+          try {
+            // Only restore when the destination is missing; otherwise avoid clobbering.
+            await fs.access(expanded);
+          } catch {
+            try {
+              await fs.rename(backupPath, expanded);
+            } catch {
+              // If restore fails, leave backup for manual recovery.
+            }
+          }
+        }
+        throw replaceErr;
+      }
+
+      if (backedUp) {
+        try {
+          await fs.unlink(backupPath);
+        } catch {
+          // Best effort (leaving a backup is safer than failing the write).
+        }
+      }
+      return;
+    }
   } catch (err: any) {
     try { await fs.unlink(tempPath); } catch {} 
-    throw new Error(`Failed to atomic write to ${expanded}: ${err.message}`);
+    throw new Error(`Failed to atomic write to ${expanded}: ${err?.message || String(err)}`);
   }
 }
 
