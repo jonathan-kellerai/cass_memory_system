@@ -83,6 +83,22 @@ describe("starters module (unit)", () => {
     }, "starters-custom-discovery");
   });
 
+  test("invalid custom starter files are ignored (do not break discovery)", async () => {
+    await withTempCassHome(async (env) => {
+      const startersDir = path.join(env.cassMemoryDir, "starters", "custom");
+      await mkdir(startersDir, { recursive: true });
+
+      await writeFile(path.join(startersDir, "broken.yaml"), "name: [", "utf-8");
+
+      const summaries = await listStarters();
+      expect(summaries.map((s) => s.name)).toContain("general");
+      expect(summaries.some((s) => s.source === "custom" && s.path?.endsWith("broken.yaml"))).toBe(false);
+
+      const loaded = await loadStarter("broken");
+      expect(loaded).toBeNull();
+    }, "starters-invalid-custom");
+  });
+
   test("applyStarter merges deterministically and respects preferExisting", async () => {
     await withTempCassHome(async () => {
       const starter = await loadStarter("general");
