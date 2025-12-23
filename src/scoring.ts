@@ -56,12 +56,22 @@ export function getDecayedCounts(
 
   for (const event of allHelpful) {
     const base = calculateDecayedValue(event, now, halfLifeDays);
-    const val = base; 
+    // `decayedValue` is an optional per-event weight used by implicit feedback
+    // (e.g., outcomes) to represent stronger/weaker signals. Default weight is 1.
+    const weight =
+      typeof event.decayedValue === "number" && Number.isFinite(event.decayedValue)
+        ? Math.max(0, event.decayedValue)
+        : 1;
+    const val = base * weight;
     if (Number.isFinite(val)) decayedHelpful += val;
   }
   for (const event of allHarmful) {
     const base = calculateDecayedValue(event, now, halfLifeDays);
-    const val = base; 
+    const weight =
+      typeof event.decayedValue === "number" && Number.isFinite(event.decayedValue)
+        ? Math.max(0, event.decayedValue)
+        : 1;
+    const val = base * weight;
     if (Number.isFinite(val)) decayedHarmful += val;
   }
 
