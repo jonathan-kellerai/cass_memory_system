@@ -17,8 +17,10 @@ export async function recordFeedback(
   bulletId: string,
   flags: MarkFlags
 ): Promise<{ type: "helpful" | "harmful"; score: number; state: string }> {
-  if (!flags.helpful && !flags.harmful) {
-    throw new Error("Must specify --helpful or --harmful");
+  const helpful = Boolean(flags.helpful);
+  const harmful = Boolean(flags.harmful);
+  if (helpful === harmful) {
+    throw new Error("Must specify exactly one of --helpful or --harmful");
   }
 
   const config = await loadConfig();
@@ -29,7 +31,7 @@ export async function recordFeedback(
   const repoPath = repoDir ? path.join(repoDir, "playbook.yaml") : null;
   const repoPlaybookExists = repoPath ? await fileExists(repoPath) : false;
 
-  const type: "helpful" | "harmful" = flags.helpful ? "helpful" : "harmful";
+  const type: "helpful" | "harmful" = helpful ? "helpful" : "harmful";
 
   const tryRecordInPlaybook = async (
     saveTarget: string
