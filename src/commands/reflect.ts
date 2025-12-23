@@ -50,6 +50,12 @@ function formatDeltaLine(delta: PlaybookDelta): string {
   }
 }
 
+// Internal exports for unit tests (kept small to avoid expanding public API surface).
+export const __test = {
+  summarizeDeltas,
+  formatDeltaLine,
+};
+
 export async function reflectCommand(
   options: {
     days?: number;

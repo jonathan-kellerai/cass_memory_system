@@ -1,8 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { reflectOnSession, deduplicateDeltas } from "../src/reflect.js"; // Internal export for testing
+import { __test as reflectCommandTest } from "../src/commands/reflect.js";
 import { createTestConfig, createTestDiary, createTestPlaybook, createTestBullet } from "./helpers/factories.js";
 import { PlaybookDelta } from "../src/types.js";
 import { __resetReflectorStubsForTest } from "../src/llm.js";
+import { formatBulletsForPrompt, hashDelta, shouldExitEarly } from "../src/reflect.js";
 
 describe("reflectOnSession", () => {
   const config = createTestConfig();
@@ -132,5 +134,63 @@ describe("deduplicateDeltas", () => {
     
     const result = deduplicateDeltas([d2], [d1]);
     expect(result).toHaveLength(1);
+  });
+});
+
+describe("reflect command helpers (unit)", () => {
+  test("summarizeDeltas counts delta types", () => {
+    const deltas: PlaybookDelta[] = [
+      { type: "add", bullet: { content: "A", category: "c" }, reason: "r", sourceSession: "s" },
+      { type: "helpful", bulletId: "b-1" },
+      { type: "harmful", bulletId: "b-2" },
+      { type: "replace", bulletId: "b-3", newContent: "new" },
+      { type: "deprecate", bulletId: "b-4", reason: "outdated" },
+      { type: "merge", bulletIds: ["b-5", "b-6"], mergedContent: "merged" },
+    ];
+
+    const counts = reflectCommandTest.summarizeDeltas(deltas);
+    expect(counts.add).toBe(1);
+    expect(counts.helpful).toBe(1);
+    expect(counts.harmful).toBe(1);
+    expect(counts.replace).toBe(1);
+    expect(counts.deprecate).toBe(1);
+    expect(counts.merge).toBe(1);
+  });
+
+  test("formatDeltaLine renders each delta type", () => {
+    expect(
+      reflectCommandTest.formatDeltaLine({ type: "add", bullet: { content: "A", category: "cat" }, reason: "r", sourceSession: "s" })
+    ).toContain("ADD");
+    expect(reflectCommandTest.formatDeltaLine({ type: "helpful", bulletId: "b-1" })).toBe("HELPFUL  b-1");
+    expect(reflectCommandTest.formatDeltaLine({ type: "harmful", bulletId: "b-2" })).toBe("HARMFUL  b-2");
+    expect(reflectCommandTest.formatDeltaLine({ type: "harmful", bulletId: "b-3", reason: "wasted_time" })).toContain("(wasted_time)");
+    expect(reflectCommandTest.formatDeltaLine({ type: "replace", bulletId: "b-4", newContent: "new" })).toContain("REPLACE");
+    expect(reflectCommandTest.formatDeltaLine({ type: "deprecate", bulletId: "b-5", reason: "outdated" })).toContain("DEPRECATE");
+    expect(reflectCommandTest.formatDeltaLine({ type: "merge", bulletIds: ["b-6", "b-7"], mergedContent: "merged" })).toContain("MERGE");
+  });
+});
+
+describe("reflect module helpers (unit)", () => {
+  test("formatBulletsForPrompt handles empty playbook", () => {
+    expect(formatBulletsForPrompt([])).toBe("(Playbook is empty)");
+  });
+
+  test("hashDelta normalizes merge ids and replace content", () => {
+    const mergeA: PlaybookDelta = { type: "merge", bulletIds: ["b-2", "b-1"], mergedContent: "m" };
+    const mergeB: PlaybookDelta = { type: "merge", bulletIds: ["b-1", "b-2"], mergedContent: "m" };
+    expect(hashDelta(mergeA)).toBe(hashDelta(mergeB));
+
+    const replaceA: PlaybookDelta = { type: "replace", bulletId: "b-3", newContent: " New   Content " };
+    const replaceB: PlaybookDelta = { type: "replace", bulletId: "b-3", newContent: "new content" };
+    expect(hashDelta(replaceA)).toBe(hashDelta(replaceB));
+  });
+
+  test("shouldExitEarly respects iteration, per-iteration, and total thresholds", () => {
+    const config = createTestConfig({ maxReflectorIterations: 3 });
+
+    expect(shouldExitEarly(0, 0, 0, config)).toBe(true);
+    expect(shouldExitEarly(0, 1, 20, config)).toBe(true);
+    expect(shouldExitEarly(2, 1, 1, config)).toBe(true);
+    expect(shouldExitEarly(0, 1, 1, config)).toBe(false);
   });
 });
