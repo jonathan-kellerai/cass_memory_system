@@ -29,7 +29,7 @@ import {
 } from "./utils.js";
 import { z } from "zod";
 import { getEffectiveScore, isStale } from "./scoring.js";
-import { formatMaturityIcon } from "./output.js";
+import { formatMaturityIcon, iconPrefix } from "./output.js";
 import { withLock } from "./lock.js";
 
 // --- Interfaces ---
@@ -611,7 +611,8 @@ export function exportToAgentsMd(
     const slice = options.topN ? sortedAntiPatterns.slice(0, options.topN) : sortedAntiPatterns;
     for (const b of slice) {
       const counts = options.showCounts ? ` [${b.helpfulCount ?? 0}+/${b.harmfulCount ?? 0}-]` : "";
-      md += `- ⛔ ${b.content}${counts}\n`;
+      const avoidPrefix = iconPrefix("warning") || "AVOID: ";
+      md += `- ${avoidPrefix}${b.content}${counts}\n`;
     }
     md += "\n";
   }
