@@ -111,12 +111,35 @@ function coerceContent(raw: any): string | null {
     if (typeof raw.text === "string") return raw.text;
     if (typeof raw.content === "string") return raw.content;
     if (typeof raw.message === "string") return raw.message;
+    // Codex CLI: content blocks have type: "input_text" or "output_text" with text field
+    if (raw.type === "input_text" || raw.type === "output_text") {
+      return typeof raw.text === "string" ? raw.text : null;
+    }
   }
 
   return null;
 }
 
 function formatSessionEntry(entry: any): string | null {
+  // Handle Codex CLI format: { type: "response_item", payload: { type: "message", role: "user", content: [...] } }
+  if (entry?.type === "response_item" && entry?.payload) {
+    const payload = entry.payload;
+    if (payload?.type === "message" && payload?.role && payload?.content) {
+      const content = coerceContent(payload.content);
+      if (content) {
+        return `[${payload.role}] ${content}`;
+      }
+    }
+    // Other response_item types (function_call, etc.)
+    return null;
+  }
+
+  // Handle session_meta entries (Codex CLI)
+  if (entry?.type === "session_meta") {
+    return null; // Skip metadata entries
+  }
+
+  // Standard format: { role: "user", content: "..." }
   const content = coerceContent(entry?.content ?? entry?.text ?? entry?.message ?? entry);
   if (!content) return null;
   const speaker = entry?.role || entry?.type || entry?.agent;
@@ -871,6 +894,26 @@ export async function cassExport(
 
   try {
     const { stdout } = await runner.execFile(resolvedCassPath, args, { maxBuffer: 50 * 1024 * 1024 });
+
+    // Detect if cass export returned mostly useless "=== UNKNOWN ===" content
+    // This happens when cass doesn't understand the session format (e.g., Codex CLI)
+    const unknownCount = (stdout.match(/=== UNKNOWN ===/g) || []).length;
+    const totalLines = stdout.split("\n").filter((l) => l.trim()).length;
+    const unknownRatio = totalLines > 0 ? unknownCount / totalLines : 0;
+
+    // If more than 50% of lines are UNKNOWN, try direct parsing
+    if (unknownRatio > 0.5 && unknownCount > 3) {
+      log(`cass export returned ${unknownCount} UNKNOWN entries (${Math.round(unknownRatio * 100)}%). Trying direct parse...`, true);
+      const fallback = await handleSessionExportFailure(
+        sessionPath,
+        new Error("cass export returned mostly UNKNOWN content"),
+        config
+      );
+      if (fallback !== null && fallback.trim().length > 0) {
+        return fallback;
+      }
+    }
+
     const activeConfig = config || await loadConfig();
     const sanitizeConfig = getSanitizeConfig(activeConfig);
     const compiledConfig = {
@@ -1003,11 +1046,39 @@ export async function cassTimeline(
 ): Promise<CassTimelineResult> {
   const resolvedCassPath = expandPath(cassPath);
   try {
-    const { stdout } = await runner.execFile(resolvedCassPath, ["timeline", "--days", days.toString(), "--json"]);
+    // cass timeline uses --since Nd format, not --days
+    const { stdout } = await runner.execFile(resolvedCassPath, ["timeline", "--since", `${days}d`, "--json"]);
     const parsed = parseCassJsonOutput(stdout);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as CassTimelineResult)
-      : { groups: [] };
+
+    // cass timeline returns { groups: {}, range: {...}, total_sessions: N }
+    // where groups is an object keyed by date, not an array
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const result = parsed as any;
+      // Transform object groups into array format expected by consumers
+      if (result.groups && typeof result.groups === "object" && !Array.isArray(result.groups)) {
+        const groupsArray: CassTimelineGroup[] = [];
+        for (const [date, sessions] of Object.entries(result.groups)) {
+          if (Array.isArray(sessions)) {
+            groupsArray.push({
+              date,
+              sessions: sessions.map((s: any) => ({
+                path: s.path || s.source_path || "",
+                agent: s.agent || "unknown",
+                messageCount: s.messageCount || s.message_count || 0,
+                startTime: s.startTime || s.start_time || s.created_at || "",
+                endTime: s.endTime || s.end_time || "",
+              })),
+            });
+          }
+        }
+        return { groups: groupsArray };
+      }
+      // Already in expected format
+      if (Array.isArray(result.groups)) {
+        return result as CassTimelineResult;
+      }
+    }
+    return { groups: [] };
   } catch {
     return { groups: [] };
   }
@@ -1031,11 +1102,39 @@ export async function findUnprocessedSessions(
   const agentFilter = typeof options.agent === "string" ? options.agent.trim().toLowerCase() : undefined;
   const agentNormalized = agentFilter ? agentFilter : undefined;
 
+  // Try timeline first
   const timeline = await cassTimeline(days, cassPath, runner);
+  const groups = timeline.groups || [];
 
-  const allSessions = timeline.groups.flatMap((g) =>
-    g.sessions.map((s) => ({ path: s.path, agent: s.agent }))
-  );
+  let allSessions: Array<{ path: string; agent: string }> = [];
+
+  if (Array.isArray(groups) && groups.length > 0) {
+    // Use timeline groups if available
+    allSessions = groups.flatMap((g) =>
+      (g.sessions || []).map((s) => ({ path: s.path, agent: s.agent }))
+    );
+  } else {
+    // Fallback: use broad search queries to discover recent sessions
+    // This works around cass timeline returning empty groups
+    const broadQueries = ["the", "and", "to", "is", "a", "for", "that", "in", "on", "with"];
+    const seenPaths = new Set<string>();
+
+    for (const query of broadQueries) {
+      if (seenPaths.size >= maxSessions * 3) break; // Get enough candidates
+
+      try {
+        const hits = await cassSearch(query, { limit: 50, days }, cassPath, runner);
+        for (const hit of hits) {
+          if (!seenPaths.has(hit.source_path)) {
+            seenPaths.add(hit.source_path);
+            allSessions.push({ path: hit.source_path, agent: hit.agent });
+          }
+        }
+      } catch {
+        // Ignore search errors, try next query
+      }
+    }
+  }
 
   return allSessions
     .filter((s) => !processed.has(s.path))
