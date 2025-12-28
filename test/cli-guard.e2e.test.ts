@@ -6,7 +6,7 @@
  * Uses isolated temp directories to avoid affecting the real system.
  */
 import { describe, it, expect } from "bun:test";
-import { stat, readFile, mkdir, writeFile, rm, chmod } from "node:fs/promises";
+import { stat, readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { guardCommand, installGuard } from "../src/commands/guard.js";
 import { withTempDir } from "./helpers/temp.js";
