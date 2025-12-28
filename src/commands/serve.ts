@@ -421,11 +421,26 @@ async function handleToolCall(name: string, args: any): Promise<any> {
           deltasGenerated: outcome.deltasGenerated,
           deltasApplied: 0,
           dryRun: true,
-          proposedDeltas: deltas.map(d => ({
-            type: d.type,
-            ...(d.type === "add" ? { content: d.bullet?.content } : {}),
-            ...(d.type !== "add" && "bulletId" in d ? { bulletId: d.bulletId } : {})
-          })),
+          proposedDeltas: deltas.map(d => {
+            const base = { type: d.type };
+            if (d.type === "add") {
+              return { ...base, content: d.bullet.content, category: d.bullet.category, reason: d.reason };
+            }
+            if (d.type === "replace") {
+              return { ...base, bulletId: d.bulletId, newContent: d.newContent, reason: d.reason };
+            }
+            if (d.type === "merge") {
+              return { ...base, bulletIds: d.bulletIds, mergedContent: d.mergedContent, reason: d.reason };
+            }
+            if (d.type === "deprecate") {
+              return { ...base, bulletId: d.bulletId, reason: d.reason };
+            }
+            // helpful/harmful
+            if ("bulletId" in d) {
+              return { ...base, bulletId: d.bulletId, ...("reason" in d ? { reason: d.reason } : {}) };
+            }
+            return base;
+          }),
           message: `Would apply ${outcome.deltasGenerated} changes from ${outcome.sessionsProcessed} sessions`
         };
       }
