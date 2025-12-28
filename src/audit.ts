@@ -31,6 +31,9 @@ export async function scanSessionsForViolations(
     warn(`Audit running with ${activeBullets.length} rules. This may exceed context limits or degrade performance.`);
   }
 
+  // Pre-generate rules list string once (optimization)
+  const rulesList = activeBullets.map(b => `- [${b.id}] ${b.content}`).join("\n");
+
   // Simple concurrency batching
   for (let i = 0; i < sessions.length; i += CONCURRENCY) {
     const chunk = sessions.slice(i, i + CONCURRENCY);
@@ -43,11 +46,6 @@ export async function scanSessionsForViolations(
           : await cassExport(sessionPath, "text", config.cassPath, config);
         if (!content) return;
 
-        // Truncate rules list if necessary (rough estimate: 100 chars per rule)
-        // If we have > 200 rules, this string is > 20kb. 
-        // For now, simple join is okay as most playbooks are small.
-        const rulesList = activeBullets.map(b => `- [${b.id}] ${b.content}`).join("\n");
-        
         // Truncate session content to ensure rules fit
         // Reserve 10k chars for rules + overhead if possible
         const maxContentChars = Math.max(5000, 30000 - rulesList.length);

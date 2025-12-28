@@ -390,6 +390,50 @@ export async function saveTrauma(entry: TraumaEntry): Promise<void> {
 }
 
 /**
+ * Save multiple trauma entries in batch.
+ * Optimizes file locking by grouping writes per file.
+ */
+export async function saveTraumas(entries: TraumaEntry[]): Promise<void> {
+  // Group entries by target path
+  const batches = new Map<string, string[]>();
+
+  for (const entry of entries) {
+    let targetPath: string;
+
+    if (entry.scope === "global") {
+      const globalDir = resolveGlobalDir();
+      targetPath = path.join(globalDir, GLOBAL_TRAUMA_FILE);
+    } else {
+      // Project scope
+      if (!entry.projectPath) {
+        const repoDir = await resolveRepoDir();
+        if (!repoDir) {
+          throw new Error("Cannot save project-scoped trauma: not in a git repository");
+        }
+        targetPath = path.join(repoDir, REPO_TRAUMA_FILE);
+      } else {
+        targetPath = path.join(entry.projectPath, ".cass", REPO_TRAUMA_FILE);
+      }
+    }
+
+    if (!batches.has(targetPath)) {
+      batches.set(targetPath, []);
+    }
+    batches.get(targetPath)!.push(JSON.stringify(entry));
+  }
+
+  // Write each batch under a single lock
+  for (const [targetPath, lines] of batches.entries()) {
+    await ensureDir(path.dirname(targetPath));
+    const content = lines.join("\n") + "\n";
+    
+    await withLock(targetPath, async () => {
+      await fs.appendFile(expandPath(targetPath), content, "utf-8");
+    });
+  }
+}
+
+/**
  * Check a command against all active traumas.
  * Returns the matching entry if found, null otherwise.
  */

@@ -6,6 +6,7 @@ import {
 import { 
   loadTraumas, 
   saveTrauma,
+  saveTraumas,
   setTraumaStatusById,
   removeTraumaById
 } from "../trauma.js";
@@ -371,6 +372,8 @@ async function importTraumas(
   const warnings: string[] = [];
   let imported = 0;
 
+  const entriesToSave: TraumaEntry[] = [];
+
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i] ?? "";
     const trimmed = raw.trim();
@@ -421,8 +424,12 @@ async function importTraumas(
       created_at: now(),
     };
 
-    await saveTrauma(entry);
+    entriesToSave.push(entry);
     imported += 1;
+  }
+
+  if (entriesToSave.length > 0) {
+    await saveTraumas(entriesToSave);
   }
 
   if (flags.json) {
