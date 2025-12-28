@@ -151,6 +151,7 @@ function prepareBulletForExport(bullet: PlaybookBullet): Partial<PlaybookBullet>
   // Create a copy without source session paths (not portable)
   const exported: Partial<PlaybookBullet> = { ...bullet };
   delete exported.sourceSessions; // Not portable between systems
+  delete exported.sourceAgents;   // Not portable/privacy sensitive
   return exported;
 }
 
@@ -347,6 +348,7 @@ export async function playbookCommand(
     session?: string;
     check?: boolean;
     strict?: boolean;
+    repo?: boolean;
   }
 ) {
   const startedAtMs = Date.now();
@@ -414,6 +416,32 @@ export async function playbookCommand(
         startedAtMs,
       });
       return;
+    }
+
+    // Determine target path based on --repo flag
+    let targetPath = config.playbookPath;
+    if (flags.repo) {
+      const repoDir = await resolveRepoDir();
+      if (!repoDir) {
+        reportError("Not in a git repository. Cannot import to repo playbook.", {
+          code: ErrorCode.CONFIG_INVALID,
+          hint: "Run inside a git repo or omit --repo",
+          json: flags.json,
+          command,
+          startedAtMs,
+        });
+        return;
+      }
+      targetPath = path.join(repoDir, "playbook.yaml");
+      // Ensure file exists (or at least directory)
+      if (!(await fileExists(targetPath))) {
+        // If it doesn't exist, check if we can create it (init --repo logic check)
+        // But for import, we usually expect it to exist or we create it.
+        // Let's assume we can create it if the dir exists.
+        if (!(await fileExists(repoDir))) {
+           await fs.mkdir(repoDir, { recursive: true });
+        }
+      }
     }
 
     const progressFormat = flags.json ? "json" : "text";
@@ -543,8 +571,8 @@ export async function playbookCommand(
     let updated = 0;
 
     // Merge with existing playbook
-    await withLock(config.playbookPath, async () => {
-      const existingPlaybook = await loadPlaybook(config.playbookPath);
+    await withLock(targetPath, async () => {
+      const existingPlaybook = await loadPlaybook(targetPath);
       const existingIds = new Set(existingPlaybook.bullets.map(b => b.id));
 
       for (let i = 0; i < importedBullets.length; i++) {
@@ -568,7 +596,7 @@ export async function playbookCommand(
       }
 
       mergeProgress.update(importedBullets.length, "Saving playbook...");
-      await savePlaybook(existingPlaybook, config.playbookPath);
+      await savePlaybook(existingPlaybook, targetPath);
       mergeProgress.complete(`Import complete (${added} added, ${updated} updated, ${skipped} skipped)`);
 
       if (flags.json) {
@@ -576,6 +604,7 @@ export async function playbookCommand(
           command,
           {
           file: filePath,
+          target: targetPath,
           added,
           skipped,
           updated,
@@ -585,6 +614,7 @@ export async function playbookCommand(
         );
       } else {
         console.log(chalk.green(`${icon("success")} Imported playbook from ${filePath}`));
+        console.log(chalk.dim(`  Target: ${targetPath}`));
         console.log(`  - ${chalk.green(added)} bullets added`);
         console.log(`  - ${chalk.yellow(skipped)} bullets skipped (already exist)`);
         if (updated > 0) {
