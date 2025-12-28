@@ -451,22 +451,39 @@ export async function generateObjectSafe<T>(
       return result.object;
     } catch (err: any) {
       lastError = err;
-      // If it's a budget error, don't retry
-      if (err.message.includes("budget exceeded")) throw err;
+      
+      const errorMsg = err.message || String(err);
+      const isBudgetError = errorMsg.includes("budget exceeded");
+      
+      // Stop immediately for budget errors
+      if (isBudgetError) throw err;
+
+      // Identify hard API errors that won't be fixed by retrying (400 Bad Request, 401 Unauthorized, 403 Forbidden)
+      // Note: 429 and 5xx are handled by llmWithRetry
+      const status = err.statusCode || err.status;
+      const isHardApiError = status === 400 || status === 401 || status === 403;
+      
+      if (isHardApiError) {
+        warn(`[LLM] Hard API error (${status}): ${errorMsg}. Not retrying.`);
+        throw err;
+      }
       
       // Check if it's a network/rate-limit error that llmWithRetry should handle
       const isNetworkOrApiError = LLM_RETRY_CONFIG.retryableErrors.some(e => 
-        err.message?.toLowerCase().includes(e.toLowerCase()) || 
+        errorMsg.toLowerCase().includes(e.toLowerCase()) || 
         err.code?.toString().includes(e) ||
         err.statusCode?.toString().includes(e)
       );
 
       if (isNetworkOrApiError) {
-         throw err; // Let llmWithRetry handle backoff
+         // Rethrow so llmWithRetry can handle the backoff/retry logic at the higher level
+         throw err; 
       }
 
+      // If we are here, it's likely a schema validation error or model hallucination (JSON parse error).
+      // We log it and continue the loop to retry with a "fix it" prompt.
       if (attempt < maxAttempts) {
-        warn(`[LLM] generateObjectSafe attempt ${attempt} failed: ${err.message}. Retrying...`);
+        warn(`[LLM] Schema validation failed (attempt ${attempt}): ${errorMsg}. Retrying with stricter prompt...`);
       }
     }
   }
