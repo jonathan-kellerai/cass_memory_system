@@ -1,10 +1,40 @@
 import { describe, test, expect } from "bun:test";
 import { reflectOnSession, deduplicateDeltas } from "../src/reflect.js"; // Internal export for testing
-import { __test as reflectCommandTest } from "../src/commands/reflect.js";
+import { __test as reflectCommandTest, reflectCommand } from "../src/commands/reflect.js";
 import { createTestConfig, createTestDiary, createTestPlaybook, createTestBullet } from "./helpers/factories.js";
 import { PlaybookDelta } from "../src/types.js";
 import { formatBulletsForPrompt, hashDelta, shouldExitEarly } from "../src/reflect.js";
 import { withLlmShim } from "./helpers/llm-shim.js";
+import { withTempCassHome } from "./helpers/temp.js";
+import { withTempGitRepo } from "./helpers/git.js";
+
+/**
+ * Capture console output during async function execution.
+ */
+function captureConsole() {
+  const logs: string[] = [];
+  const errors: string[] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  };
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  };
+
+  return {
+    logs,
+    errors,
+    restore: () => {
+      console.log = originalLog;
+      console.error = originalError;
+    },
+    getOutput: () => logs.join("\n"),
+    getErrors: () => errors.join("\n"),
+  };
+}
 
 describe("reflectOnSession", () => {
   const config = createTestConfig();
@@ -164,6 +194,31 @@ describe("reflect command helpers (unit)", () => {
     expect(counts.merge).toBe(1);
   });
 
+  test("summarizeDeltas returns zeros for empty array", () => {
+    const counts = reflectCommandTest.summarizeDeltas([]);
+    expect(counts.add).toBe(0);
+    expect(counts.helpful).toBe(0);
+    expect(counts.harmful).toBe(0);
+    expect(counts.replace).toBe(0);
+    expect(counts.deprecate).toBe(0);
+    expect(counts.merge).toBe(0);
+  });
+
+  test("summarizeDeltas handles multiple deltas of same type", () => {
+    const deltas: PlaybookDelta[] = [
+      { type: "add", bullet: { content: "A", category: "c" }, reason: "r1", sourceSession: "s1" },
+      { type: "add", bullet: { content: "B", category: "c" }, reason: "r2", sourceSession: "s2" },
+      { type: "add", bullet: { content: "C", category: "c" }, reason: "r3", sourceSession: "s3" },
+      { type: "helpful", bulletId: "b-1" },
+      { type: "helpful", bulletId: "b-2" },
+    ];
+
+    const counts = reflectCommandTest.summarizeDeltas(deltas);
+    expect(counts.add).toBe(3);
+    expect(counts.helpful).toBe(2);
+    expect(counts.harmful).toBe(0);
+  });
+
   test("formatDeltaLine renders each delta type", () => {
     expect(
       reflectCommandTest.formatDeltaLine({ type: "add", bullet: { content: "A", category: "cat" }, reason: "r", sourceSession: "s" })
@@ -174,6 +229,51 @@ describe("reflect command helpers (unit)", () => {
     expect(reflectCommandTest.formatDeltaLine({ type: "replace", bulletId: "b-4", newContent: "new" })).toContain("REPLACE");
     expect(reflectCommandTest.formatDeltaLine({ type: "deprecate", bulletId: "b-5", reason: "outdated" })).toContain("DEPRECATE");
     expect(reflectCommandTest.formatDeltaLine({ type: "merge", bulletIds: ["b-6", "b-7"], mergedContent: "merged" })).toContain("MERGE");
+  });
+
+  test("formatDeltaLine includes category and content in ADD", () => {
+    const line = reflectCommandTest.formatDeltaLine({
+      type: "add",
+      bullet: { content: "Use TypeScript for safety", category: "best-practices" },
+      reason: "learned from session",
+      sourceSession: "/path/to/session"
+    });
+    expect(line).toBe("ADD  [best-practices] Use TypeScript for safety");
+  });
+
+  test("formatDeltaLine includes bulletId and newContent in REPLACE", () => {
+    const line = reflectCommandTest.formatDeltaLine({
+      type: "replace",
+      bulletId: "b-abc123",
+      newContent: "Updated content here"
+    });
+    expect(line).toBe("REPLACE  b-abc123 → Updated content here");
+  });
+
+  test("formatDeltaLine includes bulletId and reason in DEPRECATE", () => {
+    const line = reflectCommandTest.formatDeltaLine({
+      type: "deprecate",
+      bulletId: "b-old",
+      reason: "superseded by newer rule"
+    });
+    expect(line).toBe("DEPRECATE  b-old (superseded by newer rule)");
+  });
+
+  test("formatDeltaLine lists all bullet IDs in MERGE", () => {
+    const line = reflectCommandTest.formatDeltaLine({
+      type: "merge",
+      bulletIds: ["b-1", "b-2", "b-3"],
+      mergedContent: "Combined rule content"
+    });
+    expect(line).toBe("MERGE  b-1, b-2, b-3 → Combined rule content");
+  });
+
+  test("formatDeltaLine handles harmful without reason", () => {
+    const line = reflectCommandTest.formatDeltaLine({
+      type: "harmful",
+      bulletId: "b-xyz"
+    });
+    expect(line).toBe("HARMFUL  b-xyz");
   });
 });
 
@@ -195,9 +295,21 @@ describe("reflect module helpers (unit)", () => {
   test("shouldExitEarly respects iteration, per-iteration, and total thresholds", () => {
     const config = createTestConfig({ maxReflectorIterations: 3 });
 
+    // Exit early when deltasThisIteration is 0
     expect(shouldExitEarly(0, 0, 0, config)).toBe(true);
-    expect(shouldExitEarly(0, 1, 20, config)).toBe(true);
+
+    // Don't exit early when we have deltas and haven't hit limits
+    // iteration=0, deltasThisIteration=1, totalDeltas=20 => continue (false)
+    expect(shouldExitEarly(0, 1, 20, config)).toBe(false);
+
+    // Exit when we've reached max iterations (iteration >= maxIterations - 1)
+    // iteration=2 >= maxIterations-1=2 => exit (true)
     expect(shouldExitEarly(2, 1, 1, config)).toBe(true);
+
+    // Normal case: haven't hit any limits => continue (false)
     expect(shouldExitEarly(0, 1, 1, config)).toBe(false);
+
+    // Exit when totalDeltas >= 50
+    expect(shouldExitEarly(0, 1, 50, config)).toBe(true);
   });
 });

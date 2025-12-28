@@ -146,39 +146,10 @@ function createMockGenerateObject(config: LlmShimConfig): LLMIO["generateObject"
     const schema = options?.schema;
 
     // Detect which LLM function is being called based on prompt content
-    if (prompt.includes("diary") || prompt.includes("session") || prompt.includes("accomplishments")) {
-      // extractDiary call
-      if (config.errors?.extractDiary) {
-        throw config.errors.extractDiary;
-      }
-
-      if (callLog) {
-        callLog.extractDiary.push({
-          content: prompt,
-          metadata: options,
-          timestamp: new Date()
-        });
-      }
-
-      const response = typeof config.extractDiary === "function"
-        ? config.extractDiary(prompt)
-        : config.extractDiary || DEFAULT_DIARY_RESPONSE;
-
-      return {
-        object: {
-          status: response.status || "success",
-          accomplishments: response.accomplishments || [],
-          decisions: response.decisions || [],
-          challenges: response.challenges || [],
-          preferences: response.preferences || [],
-          keyLearnings: response.keyLearnings || [],
-          tags: response.tags || [],
-          searchAnchors: response.searchAnchors || []
-        }
-      } as any;
-    }
-
-    if (prompt.includes("reflect") || prompt.includes("delta") || prompt.includes("playbook")) {
+    // NOTE: Check reflector FIRST because reflector prompt contains "session" and "diary"
+    // which would otherwise match the extractDiary detection.
+    // The reflector prompt uniquely contains "playbook" and "reusable lessons".
+    if (prompt.includes("playbook") || prompt.includes("reusable lessons") || prompt.includes("delta")) {
       // runReflector call
       if (config.errors?.reflector) {
         throw config.errors.reflector;
@@ -239,6 +210,39 @@ function createMockGenerateObject(config: LlmShimConfig): LLMIO["generateObject"
           reasoning: response.reasoning || "Validated",
           refinedContent: response.refinedContent,
           supportingEvidence: response.supportingEvidence || []
+        }
+      } as any;
+    }
+
+    // extractDiary detection (checked after reflector since reflector prompt also contains "session"/"diary")
+    if (prompt.includes("diary") || prompt.includes("session") || prompt.includes("accomplishments")) {
+      // extractDiary call
+      if (config.errors?.extractDiary) {
+        throw config.errors.extractDiary;
+      }
+
+      if (callLog) {
+        callLog.extractDiary.push({
+          content: prompt,
+          metadata: options,
+          timestamp: new Date()
+        });
+      }
+
+      const response = typeof config.extractDiary === "function"
+        ? config.extractDiary(prompt)
+        : config.extractDiary || DEFAULT_DIARY_RESPONSE;
+
+      return {
+        object: {
+          status: response.status || "success",
+          accomplishments: response.accomplishments || [],
+          decisions: response.decisions || [],
+          challenges: response.challenges || [],
+          preferences: response.preferences || [],
+          keyLearnings: response.keyLearnings || [],
+          tags: response.tags || [],
+          searchAnchors: response.searchAnchors || []
         }
       } as any;
     }

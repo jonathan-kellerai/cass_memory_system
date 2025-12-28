@@ -425,12 +425,17 @@ export async function generateObjectSafe<T>(
   maxAttempts: number = 3,
   io: LLMIO = DEFAULT_LLM_IO
 ): Promise<T> {
-  const llmConfig: LLMConfig = {
-    provider: config.provider as LLMProvider,
-    model: config.model,
-    apiKey: config.apiKey
-  };
-  const model = getModel(llmConfig);
+  // Only create real model when using real LLM (not mock LLMIO)
+  // Mock LLMIO ignores the model and just uses prompt content for detection
+  let model: ReturnType<typeof getModel> | null = null;
+  if (io === DEFAULT_LLM_IO) {
+    const llmConfig: LLMConfig = {
+      provider: config.provider as LLMProvider,
+      model: config.model,
+      apiKey: config.apiKey
+    };
+    model = getModel(llmConfig);
+  }
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
