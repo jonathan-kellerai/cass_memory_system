@@ -347,8 +347,9 @@ describe("E2E: CLI init command", () => {
             capture2.restore();
           }
 
-          // Should have warned
-          const hasWarning = capture2.logs.some(log =>
+          // Should have warned (error message goes to console.error)
+          const allOutput = [...capture2.logs, ...capture2.errors];
+          const hasWarning = allOutput.some(log =>
             log.includes("already has .cass") || log.includes("--force")
           );
           expect(hasWarning).toBe(true);
@@ -356,7 +357,7 @@ describe("E2E: CLI init command", () => {
           // Playbook should NOT be overwritten
           const current = await readFile(playbookPath, "utf-8");
           const currentPlaybook = yaml.parse(current);
-          const warningOutput = capture2.logs.join("\n");
+          const warningOutput = allOutput.join("\n");
           expect(warningOutput).toContain("Repo already has .cass/ directory");
         } finally {
           process.chdir(originalCwd);

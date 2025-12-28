@@ -32,7 +32,7 @@ describe("formatRelativeTime", () => {
 
   it("returns weeks for 7-29 days", () => {
     const oneWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    expect(formatRelativeTime(oneWeek)).toBe("1 weeks ago");
+    expect(formatRelativeTime(oneWeek)).toBe("1 week ago");
 
     const twoWeeks = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
     expect(formatRelativeTime(twoWeeks)).toBe("2 weeks ago");
@@ -43,7 +43,7 @@ describe("formatRelativeTime", () => {
 
   it("returns months for 30-364 days", () => {
     const oneMonth = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    expect(formatRelativeTime(oneMonth)).toBe("1 months ago");
+    expect(formatRelativeTime(oneMonth)).toBe("1 month ago");
 
     const sixMonths = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
     expect(formatRelativeTime(sixMonths)).toBe("6 months ago");
@@ -51,16 +51,16 @@ describe("formatRelativeTime", () => {
 
   it("returns years for 365+ days", () => {
     const oneYear = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
-    expect(formatRelativeTime(oneYear)).toBe("1 years ago");
+    expect(formatRelativeTime(oneYear)).toBe("1 year ago");
 
     const twoYears = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString();
     expect(formatRelativeTime(twoYears)).toBe("2 years ago");
   });
 
   it("handles edge case at week boundary", () => {
-    // Exactly 7 days should be "1 weeks ago"
+    // Exactly 7 days should be "1 week ago" (proper singular form)
     const exactlySevenDays = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    expect(formatRelativeTime(exactlySevenDays)).toBe("1 weeks ago");
+    expect(formatRelativeTime(exactlySevenDays)).toBe("1 week ago");
   });
 });
 
