@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import chalk from "chalk";
 import { icon } from "../output.js";
 import { getDefaultConfig, saveConfig } from "../config.js";
+import { withLock } from "../lock.js";
 import { cassAvailable, cassTimeline, type CassRunner } from "../cass.js";
 import { Config, ConfigSchema, ErrorCode } from "../types.js";
 import {
@@ -115,9 +116,11 @@ export async function privacyCommand(
 ): Promise<void> {
   const startedAtMs = Date.now();
   const command = `privacy:${action}`;
-  const config = await loadGlobalConfigEnsuringInit();
+  // Initial load for status check (no lock needed for status)
+  let config = await loadGlobalConfigEnsuringInit();
   const runner = deps.cassRunner;
   const cli = getCliName();
+  const globalConfigPath = expandPath("~/.cass-memory/config.json");
   const daysCheck = validatePositiveInt(flags.days, "days", { min: 1, allowUndefined: true });
   if (!daysCheck.ok) {
     reportError(daysCheck.message, {
@@ -188,45 +191,53 @@ export async function privacyCommand(
     }
 
     case "enable": {
-      const requested = args.map(normalizeAgentName).filter(Boolean);
-      const discoveredCounts = await getCassAgentCounts(days, config.cassPath, runner);
-      const discoveredAgents = discoveredCounts ? Object.keys(discoveredCounts) : [];
+      await withLock(globalConfigPath, async () => {
+        // Reload config inside lock to ensure atomic update
+        config = await loadGlobalConfigEnsuringInit();
+        
+        const requested = args.map(normalizeAgentName).filter(Boolean);
+        const discoveredCounts = await getCassAgentCounts(days, config.cassPath, runner);
+        const discoveredAgents = discoveredCounts ? Object.keys(discoveredCounts) : [];
 
-      const allowlist =
-        requested.length > 0
-          ? Array.from(new Set(requested)).sort()
-          : discoveredAgents.length > 0
-            ? discoveredAgents.sort()
-            : ["claude", "cursor", "codex", "aider", "pi_agent"];
+        const allowlist =
+          requested.length > 0
+            ? Array.from(new Set(requested)).sort()
+            : discoveredAgents.length > 0
+              ? discoveredAgents.sort()
+              : ["claude", "cursor", "codex", "aider", "pi_agent"];
 
-      config.crossAgent = {
-        ...config.crossAgent,
-        enabled: true,
-        consentGiven: true,
-        consentDate: config.crossAgent.consentDate || now(),
-        agents: allowlist,
-      };
+        config.crossAgent = {
+          ...config.crossAgent,
+          enabled: true,
+          consentGiven: true,
+          consentDate: config.crossAgent.consentDate || now(),
+          agents: allowlist,
+        };
 
-      await saveConfig(config);
+        await saveConfig(config);
 
-      if (flags.json) {
-        printJsonResult(command, { crossAgent: config.crossAgent }, { startedAtMs });
-      } else {
-        console.log(chalk.green(`${icon("success")} Cross-agent enrichment enabled`));
-        console.log(`  Allowlist: ${formatAgentList(allowlist)}`);
-      }
+        if (flags.json) {
+          printJsonResult(command, { crossAgent: config.crossAgent }, { startedAtMs });
+        } else {
+          console.log(chalk.green(`${icon("success")} Cross-agent enrichment enabled`));
+          console.log(`  Allowlist: ${formatAgentList(allowlist)}`);
+        }
+      });
       return;
     }
 
     case "disable": {
-      config.crossAgent = { ...config.crossAgent, enabled: false };
-      await saveConfig(config);
+      await withLock(globalConfigPath, async () => {
+        config = await loadGlobalConfigEnsuringInit();
+        config.crossAgent = { ...config.crossAgent, enabled: false };
+        await saveConfig(config);
 
-      if (flags.json) {
-        printJsonResult(command, { crossAgent: config.crossAgent }, { startedAtMs });
-      } else {
-        console.log(chalk.green(`${icon("success")} Cross-agent enrichment disabled`));
-      }
+        if (flags.json) {
+          printJsonResult(command, { crossAgent: config.crossAgent }, { startedAtMs });
+        } else {
+          console.log(chalk.green(`${icon("success")} Cross-agent enrichment disabled`));
+        }
+      });
       return;
     }
 
@@ -244,21 +255,24 @@ export async function privacyCommand(
         return;
       }
 
-      const normalized = normalizeAgentName(agent);
-      const next = Array.from(new Set([...(config.crossAgent.agents || []).map(normalizeAgentName), normalized])).sort();
+      await withLock(globalConfigPath, async () => {
+        config = await loadGlobalConfigEnsuringInit();
+        const normalized = normalizeAgentName(agent);
+        const next = Array.from(new Set([...(config.crossAgent.agents || []).map(normalizeAgentName), normalized])).sort();
 
-      config.crossAgent = {
-        ...config.crossAgent,
-        agents: next,
-      };
-      await saveConfig(config);
+        config.crossAgent = {
+          ...config.crossAgent,
+          agents: next,
+        };
+        await saveConfig(config);
 
-      if (flags.json) {
-        printJsonResult(command, { crossAgent: config.crossAgent }, { startedAtMs });
-      } else {
-        console.log(chalk.green(`${icon("success")} Allowed agent '${normalized}'`));
-        console.log(`  Allowlist: ${formatAgentList(next)}`);
-      }
+        if (flags.json) {
+          printJsonResult(command, { crossAgent: config.crossAgent }, { startedAtMs });
+        } else {
+          console.log(chalk.green(`${icon("success")} Allowed agent '${normalized}'`));
+          console.log(`  Allowlist: ${formatAgentList(next)}`);
+        }
+      });
       return;
     }
 
@@ -276,21 +290,24 @@ export async function privacyCommand(
         return;
       }
 
-      const normalized = normalizeAgentName(agent);
-      const next = (config.crossAgent.agents || []).map(normalizeAgentName).filter((a) => a !== normalized).sort();
+      await withLock(globalConfigPath, async () => {
+        config = await loadGlobalConfigEnsuringInit();
+        const normalized = normalizeAgentName(agent);
+        const next = (config.crossAgent.agents || []).map(normalizeAgentName).filter((a) => a !== normalized).sort();
 
-      config.crossAgent = {
-        ...config.crossAgent,
-        agents: next,
-      };
-      await saveConfig(config);
+        config.crossAgent = {
+          ...config.crossAgent,
+          agents: next,
+        };
+        await saveConfig(config);
 
-      if (flags.json) {
-        printJsonResult(command, { crossAgent: config.crossAgent }, { startedAtMs });
-      } else {
-        console.log(chalk.green(`${icon("success")} Removed agent '${normalized}' from allowlist`));
-        console.log(`  Allowlist: ${formatAgentList(next)}`);
-      }
+        if (flags.json) {
+          printJsonResult(command, { crossAgent: config.crossAgent }, { startedAtMs });
+        } else {
+          console.log(chalk.green(`${icon("success")} Removed agent '${normalized}' from allowlist`));
+          console.log(`  Allowlist: ${formatAgentList(next)}`);
+        }
+      });
       return;
     }
   }
