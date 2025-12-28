@@ -586,3 +586,542 @@ describe("contextCommand output modes", () => {
     });
   });
 });
+
+describe("safeDeprecatedPatternMatcher via playbook patterns", () => {
+  test("matches simple substring pattern (case-insensitive)", async () => {
+    await withTempCassHome(async (env) => {
+      const playbook = {
+        ...createTestPlaybook([]),
+        deprecatedPatterns: [
+          { pattern: "moment", replacement: "date-fns", reason: "maintenance mode", deprecatedAt: new Date().toISOString() },
+        ],
+      };
+      writeFileSync(env.playbookPath, yaml.stringify(playbook));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("add MOMENT.js to handle dates", { json: true });
+        const output = capture.getOutput();
+        const result = JSON.parse(output);
+
+        expect(result.success).toBe(true);
+        const hasDeprecatedWarning = result.data.deprecatedWarnings.some((w: string) =>
+          w.includes("deprecated pattern") && w.includes("moment")
+        );
+        expect(hasDeprecatedWarning).toBe(true);
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("skips excessively long regex pattern (> 256 chars)", async () => {
+    await withTempCassHome(async (env) => {
+      // Create a regex pattern > 256 chars
+      const longPattern = "/" + "a".repeat(300) + "/";
+      const playbook = {
+        ...createTestPlaybook([]),
+        deprecatedPatterns: [
+          { pattern: longPattern, replacement: "shorter", reason: "too long", deprecatedAt: new Date().toISOString() },
+        ],
+      };
+      writeFileSync(env.playbookPath, yaml.stringify(playbook));
+
+      const capture = captureConsole();
+      try {
+        // Pattern should be skipped - no match even if task contains 'a's
+        await contextCommand("aaaaaaa task", { json: true });
+        const output = capture.getOutput();
+        const errors = capture.getErrors();
+        const result = JSON.parse(output);
+
+        expect(result.success).toBe(true);
+        // Warning about skipping long pattern should appear in stderr
+        expect(errors).toContain("Skipped excessively long");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("skips potentially unsafe ReDoS pattern", async () => {
+    await withTempCassHome(async (env) => {
+      // ReDoS-prone pattern: nested quantifiers like (a+)+
+      const unsafePattern = "/(a+)+$/";
+      const playbook = {
+        ...createTestPlaybook([]),
+        deprecatedPatterns: [
+          { pattern: unsafePattern, replacement: "safe", reason: "redos", deprecatedAt: new Date().toISOString() },
+        ],
+      };
+      writeFileSync(env.playbookPath, yaml.stringify(playbook));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("test aaaaaaaa task", { json: true });
+        const output = capture.getOutput();
+        const errors = capture.getErrors();
+        const result = JSON.parse(output);
+
+        expect(result.success).toBe(true);
+        // Warning about unsafe pattern should appear in stderr
+        expect(errors).toContain("Skipped potentially unsafe");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("handles invalid regex syntax gracefully", async () => {
+    await withTempCassHome(async (env) => {
+      // Invalid regex - unclosed bracket
+      const invalidPattern = "/[abc/";
+      const playbook = {
+        ...createTestPlaybook([]),
+        deprecatedPatterns: [
+          { pattern: invalidPattern, replacement: "valid", reason: "bad regex", deprecatedAt: new Date().toISOString() },
+        ],
+      };
+      writeFileSync(env.playbookPath, yaml.stringify(playbook));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("test abc task", { json: true });
+        const output = capture.getOutput();
+        const errors = capture.getErrors();
+        const result = JSON.parse(output);
+
+        expect(result.success).toBe(true);
+        // Warning about invalid regex should appear in stderr
+        expect(errors).toContain("Invalid deprecated pattern regex");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("matches valid regex pattern", async () => {
+    await withTempCassHome(async (env) => {
+      // Valid regex pattern
+      const validPattern = "/var\\s+\\w+/";
+      const playbook = {
+        ...createTestPlaybook([]),
+        deprecatedPatterns: [
+          { pattern: validPattern, replacement: "const/let", reason: "use const or let", deprecatedAt: new Date().toISOString() },
+        ],
+      };
+      writeFileSync(env.playbookPath, yaml.stringify(playbook));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("fix var myVariable issue", { json: true });
+        const output = capture.getOutput();
+        const result = JSON.parse(output);
+
+        expect(result.success).toBe(true);
+        const hasDeprecatedWarning = result.data.deprecatedWarnings.some((w: string) =>
+          w.includes("deprecated pattern")
+        );
+        expect(hasDeprecatedWarning).toBe(true);
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+});
+
+describe("scoreBulletsEnhanced", () => {
+  test("returns empty array for empty bullets", async () => {
+    const { scoreBulletsEnhanced } = await import("../src/commands/context.js");
+    const config = createTestConfig({});
+    const result = await scoreBulletsEnhanced([], "test task", ["test"], config);
+    expect(result).toEqual([]);
+  });
+
+  test("scores bullets with keyword-only when semantic disabled", async () => {
+    await withTempCassHome(async (env) => {
+      const { scoreBulletsEnhanced } = await import("../src/commands/context.js");
+      const bullets = [
+        createTestBullet({ id: "b-1", content: "Use TypeScript for type safety", tags: ["typescript"] }),
+        createTestBullet({ id: "b-2", content: "Write tests before code", tags: ["testing"] }),
+      ];
+      const config = createTestConfig({
+        semanticSearchEnabled: false,
+        playbookPath: env.playbookPath,
+      });
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
+
+      const result = await scoreBulletsEnhanced(bullets, "typescript types", ["typescript", "types"], config);
+
+      expect(result.length).toBe(2);
+      // TypeScript bullet should score higher
+      expect(result[0].id).toBe("b-1");
+      expect(result[0].relevanceScore).toBeGreaterThan(0);
+      expect(result[0].finalScore).toBeGreaterThan(0);
+    });
+  });
+
+  test("handles semantic embedding error gracefully", async () => {
+    await withTempCassHome(async (env) => {
+      const { scoreBulletsEnhanced } = await import("../src/commands/context.js");
+      const bullets = [
+        createTestBullet({ id: "b-1", content: "Test bullet", tags: ["test"] }),
+      ];
+      // Enable semantic but with invalid model to trigger error
+      const config = createTestConfig({
+        semanticSearchEnabled: true,
+        embeddingModel: "invalid-nonexistent-model",
+        playbookPath: env.playbookPath,
+      });
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
+
+      const progressEvents: any[] = [];
+      const capture = captureConsole();
+      try {
+        const result = await scoreBulletsEnhanced(bullets, "test query", ["test"], config, {
+          json: false,
+          onSemanticProgress: (event) => progressEvents.push(event),
+        });
+
+        // Should still return scored bullets using keyword-only fallback
+        expect(result.length).toBe(1);
+        expect(result[0].relevanceScore).toBeGreaterThanOrEqual(0);
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("uses queryEmbedding from options when provided", async () => {
+    await withTempCassHome(async (env) => {
+      const { scoreBulletsEnhanced } = await import("../src/commands/context.js");
+      const bullets = [
+        { ...createTestBullet({ id: "b-1", content: "Test bullet" }), embedding: [0.1, 0.2, 0.3] },
+      ];
+      const config = createTestConfig({
+        semanticSearchEnabled: true,
+        embeddingModel: "none", // Disable actual embedding but enable semantic scoring
+        playbookPath: env.playbookPath,
+      });
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
+
+      const capture = captureConsole();
+      try {
+        // Providing queryEmbedding skips embedText call
+        const result = await scoreBulletsEnhanced(bullets as any, "test", ["test"], config, {
+          queryEmbedding: [0.1, 0.2, 0.3],
+          skipEmbeddingLoad: true,
+        });
+
+        expect(result.length).toBe(1);
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+});
+
+describe("generateContextResult", () => {
+  test("calls onProgress callback during execution", async () => {
+    await withTempCassHome(async (env) => {
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+      const progressEvents: any[] = [];
+      const capture = captureConsole();
+      try {
+        await generateContextResult("test task", { json: true }, {
+          onProgress: (event) => progressEvents.push(event),
+        });
+
+        // Should have at least cass_search events
+        const cassEvents = progressEvents.filter((e) => e.phase === "cass_search");
+        expect(cassEvents.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("filters bullets by workspace when provided", async () => {
+    await withTempCassHome(async (env) => {
+      const bullets = [
+        createTestBullet({ id: "b-global", content: "Global API rule", scope: "global" }),
+        createTestBullet({ id: "b-frontend", content: "Frontend API rule", scope: "workspace", workspace: "frontend" }),
+        createTestBullet({ id: "b-backend", content: "Backend API rule", scope: "workspace", workspace: "backend" }),
+      ];
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
+
+      const capture = captureConsole();
+      try {
+        const { result } = await generateContextResult("build API", { workspace: "frontend" });
+
+        const ids = result.relevantBullets.map((b) => b.id);
+        // Global should be included, frontend should be included, backend should be excluded
+        expect(ids).not.toContain("b-backend");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+});
+
+describe("contextCommand markdown output", () => {
+  test("markdown output shows rules with scores", async () => {
+    await withTempCassHome(async (env) => {
+      const bullets = [
+        createTestBullet({ id: "b-api", content: "Use REST for API design", category: "api", tags: ["api", "rest"] }),
+      ];
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("build REST API", { format: "markdown" });
+        const output = capture.getOutput();
+
+        expect(output).toContain("## Playbook rules");
+        expect(output).toContain("b-api");
+        expect(output).toContain("score");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("markdown output shows pitfalls section", async () => {
+    await withTempCassHome(async (env) => {
+      const bullets = [
+        createTestBullet({ id: "ap-1", content: "Never use eval for API input", isNegative: true, kind: "anti_pattern", tags: ["api", "security"] }),
+      ];
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("handle API input", { format: "markdown" });
+        const output = capture.getOutput();
+
+        expect(output).toContain("## Pitfalls");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("markdown output shows history section placeholder", async () => {
+    await withTempCassHome(async (env) => {
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("test task", { format: "markdown" });
+        const output = capture.getOutput();
+
+        expect(output).toContain("## History");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("markdown output shows empty state for no rules", async () => {
+    await withTempCassHome(async (env) => {
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("random obscure task xyz123", { format: "markdown" });
+        const output = capture.getOutput();
+
+        expect(output).toContain("No relevant playbook rules found");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("markdown output shows warnings when present", async () => {
+    await withTempCassHome(async (env) => {
+      const playbook = {
+        ...createTestPlaybook([]),
+        deprecatedPatterns: [
+          { pattern: "legacy", replacement: "modern", reason: "outdated", deprecatedAt: new Date().toISOString() },
+        ],
+      };
+      writeFileSync(env.playbookPath, yaml.stringify(playbook));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("fix legacy code", { format: "markdown" });
+        const output = capture.getOutput();
+
+        expect(output).toContain("## Warnings");
+        expect(output).toContain("legacy");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("markdown output shows suggested searches", async () => {
+    await withTempCassHome(async (env) => {
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("fix authentication bug", { format: "markdown" });
+        const output = capture.getOutput();
+
+        expect(output).toContain("## Suggested searches");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+});
+
+describe("contextCommand human output", () => {
+  test("human output shows PLAYBOOK RULES section with bullets", async () => {
+    await withTempCassHome(async (env) => {
+      const bullets = [
+        createTestBullet({ id: "b-test", content: "Test rule for human output", category: "testing", tags: ["test"] }),
+      ];
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("test code", {});
+        const output = capture.getOutput();
+
+        expect(output).toContain("PLAYBOOK RULES");
+        expect(output).toContain("b-test");
+        expect(output).toContain("testing");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("human output shows empty playbook guidance", async () => {
+    await withTempCassHome(async (env) => {
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("random obscure task xyz789", {});
+        const output = capture.getOutput();
+
+        expect(output).toContain("PLAYBOOK RULES (0)");
+        expect(output).toContain("No relevant playbook rules found");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("human output shows PITFALLS section for anti-patterns", async () => {
+    await withTempCassHome(async (env) => {
+      const bullets = [
+        createTestBullet({
+          id: "ap-sql",
+          content: "Never concatenate user input into SQL queries",
+          isNegative: true,
+          kind: "anti_pattern",
+          tags: ["sql", "security"]
+        }),
+      ];
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("fix SQL query", {});
+        const output = capture.getOutput();
+
+        expect(output).toContain("PITFALLS");
+        expect(output).toContain("ap-sql");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("human output shows HISTORY section or degraded warning when empty", async () => {
+    await withTempCassHome(async (env) => {
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("test task", {});
+        const output = capture.getOutput();
+
+        // When cass is available but empty, shows "HISTORY (0)"
+        // When cass is unavailable/degraded, shows warning about local history
+        const hasHistorySection = output.includes("HISTORY (0)") || output.includes("HISTORY (");
+        const hasDegradedWarning = output.includes("Local history unavailable");
+        expect(hasHistorySection || hasDegradedWarning).toBe(true);
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("human output shows WARNINGS section when present", async () => {
+    await withTempCassHome(async (env) => {
+      const playbook = {
+        ...createTestPlaybook([]),
+        deprecatedPatterns: [
+          { pattern: "callback", replacement: "async/await", reason: "modernize", deprecatedAt: new Date().toISOString() },
+        ],
+      };
+      writeFileSync(env.playbookPath, yaml.stringify(playbook));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("add callback function", {});
+        const output = capture.getOutput();
+
+        expect(output).toContain("WARNINGS");
+        expect(output).toContain("callback");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+
+  test("human output shows SUGGESTED SEARCHES section", async () => {
+    await withTempCassHome(async (env) => {
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+      const capture = captureConsole();
+      try {
+        await contextCommand("fix user login bug", {});
+        const output = capture.getOutput();
+
+        expect(output).toContain("SUGGESTED SEARCHES");
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+});
+
+describe("getContext wrapper", () => {
+  test("returns same structure as generateContextResult", async () => {
+    await withTempCassHome(async (env) => {
+      const { getContext } = await import("../src/commands/context.js");
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+      const capture = captureConsole();
+      try {
+        const result = await getContext("test task", { json: true });
+
+        expect(result.result).toBeDefined();
+        expect(result.rules).toBeDefined();
+        expect(result.antiPatterns).toBeDefined();
+        expect(result.cassHits).toBeDefined();
+        expect(result.warnings).toBeDefined();
+        expect(result.suggestedQueries).toBeDefined();
+      } finally {
+        capture.restore();
+      }
+    });
+  });
+});
