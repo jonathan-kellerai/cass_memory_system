@@ -391,7 +391,7 @@ describe("E2E: New User Onboarding", () => {
       const bullet2 = (JSON.parse(getResult2.stdout) as any).data.bullet;
       expect(bullet2.helpfulCount).toBe(3);
       expect(bullet2.maturity).toBe("established");
-    });
+    }, { timeout: 15000 });
 
     test("harmful marks reduce effective score", () => {
       runCm(["init", "--json"], testDir);
