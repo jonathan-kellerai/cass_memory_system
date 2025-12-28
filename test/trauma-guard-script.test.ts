@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { TRAUMA_GUARD_SCRIPT } from "../src/trauma_guard_script.js";
 import { TraumaEntry } from "../src/types.js";
