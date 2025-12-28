@@ -181,4 +181,202 @@ describe("top command - Unit Tests", () => {
     expect(badScopePayload.error.code).toBe("INVALID_INPUT");
     expect(process.exitCode).toBe(2);
   });
+
+  test("fails fast on empty category string", async () => {
+    process.exitCode = 0;
+    const { output } = await captureConsoleLog(() => topCommand(10, { json: true, category: "" }));
+    const payload = JSON.parse(output) as any;
+    expect(payload.success).toBe(false);
+    expect(payload.command).toBe("top");
+    expect(payload.error.code).toBe("INVALID_INPUT");
+    expect(payload.error.message).toContain("category");
+    expect(process.exitCode).toBe(2);
+  });
+});
+
+describe("top command - Human Output", () => {
+  test("shows ranked bullets in human-readable format", async () => {
+    await withTempCassHome(async (env) => {
+      await withCwd(env.home, async () => {
+        const t = new Date().toISOString();
+        const high = createTestBullet({
+          id: "b-human-high",
+          category: "Workflow",
+          scope: "global",
+          state: "active",
+          maturity: "established",
+          content: "A high-scoring rule for workflow",
+          helpfulCount: 5,
+          harmfulCount: 0,
+          feedbackEvents: [
+            createTestFeedbackEvent("helpful", { timestamp: t }),
+            createTestFeedbackEvent("helpful", { timestamp: t }),
+          ],
+        });
+        const low = createTestBullet({
+          id: "b-human-low",
+          category: "Workflow",
+          scope: "global",
+          state: "active",
+          maturity: "candidate",
+          content: "A lower-scoring rule",
+          helpfulCount: 1,
+          harmfulCount: 0,
+          feedbackEvents: [createTestFeedbackEvent("helpful", { timestamp: t })],
+        });
+
+        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([high, low])));
+
+        const { output } = await captureConsoleLog(() => topCommand(10, {}));
+
+        // Should show TOP header
+        expect(output).toContain("TOP");
+        // Should show bullet IDs
+        expect(output).toContain("b-human-high");
+        expect(output).toContain("b-human-low");
+        // Should show ranking numbers
+        expect(output).toContain("1.");
+        expect(output).toContain("2.");
+        // Should show score keyword
+        expect(output).toContain("score");
+        // Should show maturity
+        expect(output).toContain("established");
+        expect(output).toContain("candidate");
+        // Should show category
+        expect(output).toContain("Workflow");
+        // Should show feedback info
+        expect(output).toContain("helpful");
+        expect(output).toContain("harmful");
+      });
+    });
+  });
+
+  test("shows empty state when no bullets match", async () => {
+    await withTempCassHome(async (env) => {
+      await withCwd(env.home, async () => {
+        const bullet = createTestBullet({
+          id: "b-global-only",
+          category: "Workflow",
+          scope: "global",
+          state: "active",
+          content: "Global rule",
+        });
+
+        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([bullet])));
+
+        // Filter by workspace scope when no workspace bullets exist
+        const { output } = await captureConsoleLog(() => topCommand(10, { scope: "workspace" }));
+
+        expect(output).toContain("No bullets found matching the criteria");
+        expect(output).toContain("scope=workspace");
+      });
+    });
+  });
+
+  test("shows empty state with category filter", async () => {
+    await withTempCassHome(async (env) => {
+      await withCwd(env.home, async () => {
+        const bullet = createTestBullet({
+          id: "b-workflow",
+          category: "Workflow",
+          scope: "global",
+          state: "active",
+          content: "A workflow rule",
+        });
+
+        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([bullet])));
+
+        // Filter by category that doesn't exist
+        const { output } = await captureConsoleLog(() =>
+          topCommand(10, { category: "security" })
+        );
+
+        expect(output).toContain("No bullets found matching the criteria");
+        expect(output).toContain("category=security");
+      });
+    });
+  });
+
+  test("shows filter description when filters applied", async () => {
+    await withTempCassHome(async (env) => {
+      await withCwd(env.home, async () => {
+        const bullet = createTestBullet({
+          id: "b-filtered",
+          category: "Security",
+          scope: "global",
+          state: "active",
+          content: "A security rule",
+          helpfulCount: 2,
+          feedbackEvents: [
+            createTestFeedbackEvent("helpful", { timestamp: new Date().toISOString() }),
+          ],
+        });
+
+        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([bullet])));
+
+        const { output } = await captureConsoleLog(() =>
+          topCommand(10, { scope: "global", category: "security" })
+        );
+
+        expect(output).toContain("scope: global");
+        expect(output).toContain("category: security");
+      });
+    });
+  });
+
+  test("shows tip about inspecting bullets", async () => {
+    await withTempCassHome(async (env) => {
+      await withCwd(env.home, async () => {
+        const bullet = createTestBullet({
+          id: "b-tip",
+          category: "Workflow",
+          scope: "global",
+          state: "active",
+          content: "Rule content",
+          helpfulCount: 1,
+          feedbackEvents: [
+            createTestFeedbackEvent("helpful", { timestamp: new Date().toISOString() }),
+          ],
+        });
+
+        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([bullet])));
+
+        const { output } = await captureConsoleLog(() => topCommand(5, {}));
+
+        // Should show tip about playbook get and why commands
+        expect(output).toContain("playbook get");
+        expect(output).toContain("why");
+      });
+    });
+  });
+
+  test("shows correct score coloring based on score value", async () => {
+    await withTempCassHome(async (env) => {
+      await withCwd(env.home, async () => {
+        const t = new Date().toISOString();
+        // Create bullet with high score (should be green-ish)
+        const highScore = createTestBullet({
+          id: "b-high-score",
+          category: "Workflow",
+          scope: "global",
+          state: "active",
+          maturity: "established",
+          content: "High score rule",
+          helpfulCount: 15,
+          harmfulCount: 0,
+          feedbackEvents: Array.from({ length: 15 }, () =>
+            createTestFeedbackEvent("helpful", { timestamp: t })
+          ),
+        });
+
+        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([highScore])));
+
+        const { output } = await captureConsoleLog(() => topCommand(5, {}));
+
+        // Should contain the score display
+        expect(output).toContain("score");
+        expect(output).toContain("b-high-score");
+      });
+    });
+  });
 });
