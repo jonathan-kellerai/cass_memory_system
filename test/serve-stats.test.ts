@@ -636,6 +636,92 @@ describe("serve module tool calls", () => {
       expect(response.error.message).toContain("scope");
     }
   });
+
+  test("memory_reflect with dryRun returns proposed deltas", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "memory_reflect",
+              arguments: {
+                days: 7,
+                maxSessions: 5,
+                dryRun: true
+              }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result).toHaveProperty("sessionsProcessed");
+            expect(response.result).toHaveProperty("dryRun");
+            expect(response.result.dryRun).toBe(true);
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("memory_reflect without dryRun applies changes", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "memory_reflect",
+              arguments: {
+                days: 1,
+                maxSessions: 3
+              }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result).toHaveProperty("sessionsProcessed");
+            expect(response.result).toHaveProperty("deltasGenerated");
+            expect(response.result).toHaveProperty("message");
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("memory_reflect validates maxSessions parameter", async () => {
+    const response = await serveTest.routeRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "memory_reflect",
+        arguments: {
+          maxSessions: 500  // Exceeds max of 200
+        }
+      }
+    });
+
+    expect("error" in response).toBe(true);
+    if ("error" in response) {
+      expect(response.error.message).toContain("maxSessions");
+    }
+  });
 });
 
 describe("serve module resource reads", () => {
