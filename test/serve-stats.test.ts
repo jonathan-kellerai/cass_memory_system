@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import yaml from "yaml";
 import { createTestPlaybook, createTestBullet, createTestConfig, createTestFeedbackEvent } from "./helpers/factories.js";
 import { computePlaybookStats, __test as serveTest } from "../src/commands/serve.js";
 import { withTempCassHome } from "./helpers/temp.js";
@@ -375,6 +377,265 @@ describe("serve module tool calls", () => {
       });
     });
   });
+
+  test("cm_feedback succeeds with valid bullet and helpful flag", async () => {
+    await withTempCassHome(async (env) => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          // Create a playbook with a bullet
+          const bullet = createTestBullet({ id: "b-serve-test-1", content: "Test bullet" });
+          writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([bullet])));
+
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "cm_feedback",
+              arguments: { bulletId: "b-serve-test-1", helpful: true }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            // recordFeedback returns { success, type, score, state }
+            expect(response.result.success).toBe(true);
+            expect(response.result.type).toBe("helpful");
+            expect(typeof response.result.score).toBe("number");
+            expect(response.result.state).toBeDefined();
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("cm_feedback succeeds with harmful flag and reason", async () => {
+    await withTempCassHome(async (env) => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const bullet = createTestBullet({ id: "b-serve-test-2", content: "Another test bullet" });
+          writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([bullet])));
+
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "cm_feedback",
+              arguments: {
+                bulletId: "b-serve-test-2",
+                harmful: true,
+                reason: "Did not help with the task"
+              }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result.success).toBe(true);
+            expect(response.result.type).toBe("harmful");
+            expect(typeof response.result.score).toBe("number");
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("cm_outcome succeeds with valid sessionId and outcome", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "cm_outcome",
+              arguments: {
+                sessionId: "test-session-123",
+                outcome: "success",
+                rulesUsed: ["b-rule-1", "b-rule-2"],
+                notes: "Task completed successfully",
+                task: "Fix authentication bug"
+              }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result.sessionId).toBe("test-session-123");
+            expect(response.result.outcome).toBe("success");
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("cm_outcome with failure outcome", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "cm_outcome",
+              arguments: {
+                sessionId: "test-session-456",
+                outcome: "failure",
+                notes: "Task failed due to timeout"
+              }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result.outcome).toBe("failure");
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("cm_outcome with mixed outcome and durationSec", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "cm_outcome",
+              arguments: {
+                sessionId: "test-session-789",
+                outcome: "mixed",
+                durationSec: 120
+              }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result.outcome).toBe("mixed");
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("memory_search with scope 'both' searches playbook and cass", async () => {
+    await withTempCassHome(async (env) => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          // Create a playbook with relevant bullet
+          const bullet = createTestBullet({
+            id: "b-auth-test",
+            content: "Use JWT for authentication"
+          });
+          writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([bullet])));
+
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "memory_search",
+              arguments: { query: "jwt", scope: "both", limit: 5 }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result).toHaveProperty("playbook");
+            expect(response.result).toHaveProperty("cass");
+            expect(Array.isArray(response.result.playbook)).toBe(true);
+            expect(Array.isArray(response.result.cass)).toBe(true);
+            // Should find our bullet in playbook results
+            expect(response.result.playbook.some((b: any) => b.id === "b-auth-test")).toBe(true);
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("memory_search with scope 'cass' only searches cass", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "memory_search",
+              arguments: { query: "error handling", scope: "cass", limit: 3, days: 7 }
+            }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result).not.toHaveProperty("playbook");
+            expect(response.result).toHaveProperty("cass");
+            expect(Array.isArray(response.result.cass)).toBe(true);
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("memory_search validates scope enum", async () => {
+    const response = await serveTest.routeRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "memory_search",
+        arguments: { query: "test", scope: "invalid_scope" }
+      }
+    });
+
+    expect("error" in response).toBe(true);
+    if ("error" in response) {
+      expect(response.error.message).toContain("scope");
+    }
+  });
 });
 
 describe("serve module resource reads", () => {
@@ -449,6 +710,60 @@ describe("serve module resource reads", () => {
           if ("result" in response) {
             expect(response.result.uri).toBe("memory://stats");
             expect(response.result.data).toHaveProperty("total");
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("reads cm://diary resource", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "resources/read",
+            params: { uri: "cm://diary" }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result.uri).toBe("cm://diary");
+            expect(response.result.mimeType).toBe("application/json");
+            expect(Array.isArray(response.result.data)).toBe(true);
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("reads cm://outcomes resource", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+
+        try {
+          const response = await serveTest.routeRequest({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "resources/read",
+            params: { uri: "cm://outcomes" }
+          });
+
+          expect("result" in response).toBe(true);
+          if ("result" in response) {
+            expect(response.result.uri).toBe("cm://outcomes");
+            expect(response.result.mimeType).toBe("application/json");
+            expect(Array.isArray(response.result.data)).toBe(true);
           }
         } finally {
           process.chdir(originalCwd);
