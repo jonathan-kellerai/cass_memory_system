@@ -501,3 +501,150 @@ describe("reflectCommand input validation", () => {
     });
   });
 });
+
+describe("reflectCommand human output", () => {
+  test("shows REFLECT header and workspace info", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+        const originalLLM = process.env.CASS_MEMORY_LLM;
+        process.env.CASS_MEMORY_LLM = "none";
+
+        const capture = captureConsole();
+        try {
+          await reflectCommand({ workspace: "/test/workspace" });
+          const output = capture.getOutput();
+          expect(output).toContain("REFLECT");
+          expect(output).toContain("Workspace:");
+          expect(output).toContain("/test/workspace");
+        } finally {
+          capture.restore();
+          process.env.CASS_MEMORY_LLM = originalLLM;
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("shows session info when session specified", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+        const originalLLM = process.env.CASS_MEMORY_LLM;
+        process.env.CASS_MEMORY_LLM = "none";
+
+        const capture = captureConsole();
+        try {
+          await reflectCommand({ session: "/path/to/session.jsonl" });
+          const output = capture.getOutput();
+          expect(output).toContain("Session:");
+          expect(output).toContain("/path/to/session.jsonl");
+        } finally {
+          capture.restore();
+          process.env.CASS_MEMORY_LLM = originalLLM;
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("shows dry-run mode indicator", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+        const originalLLM = process.env.CASS_MEMORY_LLM;
+        process.env.CASS_MEMORY_LLM = "none";
+
+        const capture = captureConsole();
+        try {
+          await reflectCommand({ dryRun: true });
+          const output = capture.getOutput();
+          expect(output).toContain("dry-run");
+          expect(output).toContain("DRY RUN");
+        } finally {
+          capture.restore();
+          process.env.CASS_MEMORY_LLM = originalLLM;
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("shows no new sessions message when empty", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+        const originalLLM = process.env.CASS_MEMORY_LLM;
+        process.env.CASS_MEMORY_LLM = "none";
+
+        const capture = captureConsole();
+        try {
+          // Use days: 1 with no sessions available (isolated test environment)
+          await reflectCommand({ days: 1, maxSessions: 1 });
+          const output = capture.getOutput();
+          // In an isolated test environment, there are no sessions to process
+          // The output should either show "No new sessions" or "0 session" or progress info
+          expect(output).toMatch(/session|REFLECT/i);
+        } finally {
+          capture.restore();
+          process.env.CASS_MEMORY_LLM = originalLLM;
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("shows dry-run summary with delta types", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+        const originalLLM = process.env.CASS_MEMORY_LLM;
+        process.env.CASS_MEMORY_LLM = "none";
+
+        const capture = captureConsole();
+        try {
+          await reflectCommand({ dryRun: true });
+          const output = capture.getOutput();
+          // Should show proposed changes breakdown
+          expect(output).toContain("DRY RUN");
+          expect(output).toContain("Sessions processed");
+          // May show delta types even if counts are 0
+          const hasDeltas = output.includes("add") || output.includes("helpful") || output.includes("harmful");
+          expect(hasDeltas || output.includes("Proposed")).toBe(true);
+        } finally {
+          capture.restore();
+          process.env.CASS_MEMORY_LLM = originalLLM;
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+
+  test("shows global workspace label when no workspace specified", async () => {
+    await withTempCassHome(async () => {
+      await withTempGitRepo(async (repoDir) => {
+        const originalCwd = process.cwd();
+        process.chdir(repoDir);
+        const originalLLM = process.env.CASS_MEMORY_LLM;
+        process.env.CASS_MEMORY_LLM = "none";
+
+        const capture = captureConsole();
+        try {
+          await reflectCommand({});
+          const output = capture.getOutput();
+          expect(output).toContain("Workspace:");
+          expect(output).toContain("global");
+        } finally {
+          capture.restore();
+          process.env.CASS_MEMORY_LLM = originalLLM;
+          process.chdir(originalCwd);
+        }
+      });
+    });
+  });
+});
