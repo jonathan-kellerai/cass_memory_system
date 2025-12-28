@@ -14,8 +14,6 @@ import {
   getCliName,
   printJsonResult,
   reportError,
-  validateOneOf,
-  validatePositiveInt,
   resolveRepoDir,
   expandPath,
   fileExists,

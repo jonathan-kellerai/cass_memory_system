@@ -596,11 +596,11 @@ describe("validateCommand with dependency injection", () => {
 
             const output = capture.getOutput();
             const parsed = JSON.parse(output);
-            // Evidence should be classified with outcomes
-            if (parsed.data?.evidence) {
-              const outcomes = parsed.data.evidence.map((e: any) => e.outcome);
-              expect(outcomes).toContain("success");
-            }
+            // Evidence should be classified with outcomes - verify evidence exists
+            expect(parsed.data?.evidence).toBeDefined();
+            expect(parsed.data.evidence.length).toBeGreaterThan(0);
+            const outcomes = parsed.data.evidence.map((e: any) => e.outcome);
+            expect(outcomes).toContain("success");
           } finally {
             process.chdir(originalCwd);
           }
@@ -642,10 +642,11 @@ describe("validateCommand with dependency injection", () => {
 
             const output = capture.getOutput();
             const parsed = JSON.parse(output);
-            if (parsed.data?.evidence) {
-              const outcomes = parsed.data.evidence.map((e: any) => e.outcome);
-              expect(outcomes).toContain("failure");
-            }
+            // Evidence should be classified with outcomes - verify evidence exists
+            expect(parsed.data?.evidence).toBeDefined();
+            expect(parsed.data.evidence.length).toBeGreaterThan(0);
+            const outcomes = parsed.data.evidence.map((e: any) => e.outcome);
+            expect(outcomes).toContain("failure");
           } finally {
             process.chdir(originalCwd);
           }
@@ -686,10 +687,11 @@ describe("validateCommand with dependency injection", () => {
 
             const output = capture.getOutput();
             const parsed = JSON.parse(output);
-            if (parsed.data?.evidence) {
-              const outcomes = parsed.data.evidence.map((e: any) => e.outcome);
-              expect(outcomes).toContain("unknown");
-            }
+            // Evidence should be classified with outcomes - verify evidence exists
+            expect(parsed.data?.evidence).toBeDefined();
+            expect(parsed.data.evidence.length).toBeGreaterThan(0);
+            const outcomes = parsed.data.evidence.map((e: any) => e.outcome);
+            expect(outcomes).toContain("unknown");
           } finally {
             process.chdir(originalCwd);
           }
