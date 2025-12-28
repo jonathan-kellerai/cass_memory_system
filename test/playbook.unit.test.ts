@@ -9,7 +9,8 @@ import {
   loadPlaybook,
   savePlaybook,
   addBullet,
-  loadMergedPlaybook
+  loadMergedPlaybook,
+  removeFromBlockedLog
 } from "../src/playbook.js";
 import { createTestConfig, createTestBullet } from "./helpers/factories.js";
 
@@ -80,6 +81,78 @@ describe("playbook.ts CRUD and loading", () => {
     } finally {
       process.chdir(originalCwd);
     }
+  });
+});
+
+describe("removeFromBlockedLog", () => {
+  function tempBlockedLog(name: string) {
+    return path.join(os.tmpdir(), `cm-blocked-${Date.now()}-${name}.log`);
+  }
+
+  test("returns false if file does not exist", async () => {
+    const logPath = tempBlockedLog("missing");
+    const result = await removeFromBlockedLog("b-123", logPath);
+    expect(result).toBe(false);
+  });
+
+  test("removes matching entry and returns true", async () => {
+    const logPath = tempBlockedLog("remove");
+    const entries = [
+      { id: "b-1", reason: "harmful", timestamp: "2025-01-01" },
+      { id: "b-2", reason: "forgot", timestamp: "2025-01-02" },
+      { id: "b-3", reason: "expired", timestamp: "2025-01-03" }
+    ];
+    await fs.writeFile(logPath, entries.map(e => JSON.stringify(e)).join("\n") + "\n");
+
+    const result = await removeFromBlockedLog("b-2", logPath);
+    expect(result).toBe(true);
+
+    const content = await fs.readFile(logPath, "utf-8");
+    const remaining = content.trim().split("\n").map(l => JSON.parse(l));
+    expect(remaining.length).toBe(2);
+    expect(remaining.find((e: any) => e.id === "b-2")).toBeUndefined();
+    expect(remaining.find((e: any) => e.id === "b-1")).toBeTruthy();
+    expect(remaining.find((e: any) => e.id === "b-3")).toBeTruthy();
+  });
+
+  test("returns false if entry not found", async () => {
+    const logPath = tempBlockedLog("notfound");
+    const entries = [
+      { id: "b-1", reason: "test" }
+    ];
+    await fs.writeFile(logPath, entries.map(e => JSON.stringify(e)).join("\n") + "\n");
+
+    const result = await removeFromBlockedLog("b-nonexistent", logPath);
+    expect(result).toBe(false);
+
+    // File should be unchanged
+    const content = await fs.readFile(logPath, "utf-8");
+    expect(content.trim().split("\n").length).toBe(1);
+  });
+
+  test("preserves malformed lines", async () => {
+    const logPath = tempBlockedLog("malformed");
+    const content = '{"id":"b-1","reason":"test"}\nmalformed garbage\n{"id":"b-2","reason":"test"}\n';
+    await fs.writeFile(logPath, content);
+
+    const result = await removeFromBlockedLog("b-1", logPath);
+    expect(result).toBe(true);
+
+    const newContent = await fs.readFile(logPath, "utf-8");
+    expect(newContent).toContain("malformed garbage");
+    expect(newContent).toContain("b-2");
+    expect(newContent).not.toContain("b-1");
+  });
+
+  test("handles removing last entry (empty result)", async () => {
+    const logPath = tempBlockedLog("lastentry");
+    await fs.writeFile(logPath, '{"id":"b-only","reason":"test"}\n');
+
+    const result = await removeFromBlockedLog("b-only", logPath);
+    expect(result).toBe(true);
+
+    const content = await fs.readFile(logPath, "utf-8");
+    expect(content).toBe("");
   });
 });
 

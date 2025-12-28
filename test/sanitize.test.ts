@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { sanitize, compileExtraPatterns, SECRET_PATTERNS, isSemanticallyBlocked } from "../src/sanitize.js";
+import { sanitize, compileExtraPatterns, SECRET_PATTERNS, isSemanticallyBlocked, verifySanitization } from "../src/sanitize.js";
 
 // =============================================================================
 // SECRET_PATTERNS
@@ -433,5 +433,43 @@ describe("isSemanticallyBlocked", () => {
   it("returns false for unrelated content", () => {
     const blocked = ["Never use var"];
     expect(isSemanticallyBlocked("Prefer const for variables", blocked)).toBe(false);
+  });
+});
+
+// =============================================================================
+// verifySanitization
+// =============================================================================
+describe("verifySanitization", () => {
+  it("returns no warnings for clean text", () => {
+    const result = verifySanitization("This is a normal message with no secrets.");
+    expect(result.containsPotentialSecrets).toBe(false);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("detects potential key patterns", () => {
+    const result = verifySanitization("api_key=ABCDEFGHIJ1234567890ABCD");
+    expect(result.containsPotentialSecrets).toBe(true);
+    expect(result.warnings.some(w => w.includes("Potential Key"))).toBe(true);
+  });
+
+  it("detects potential token patterns", () => {
+    const result = verifySanitization("auth_token=ABCDEFGHIJ1234567890ABCD");
+    expect(result.containsPotentialSecrets).toBe(true);
+    expect(result.warnings.some(w => w.includes("Potential Token"))).toBe(true);
+  });
+
+  it("detects long base64 strings", () => {
+    // 60 chars of base64
+    const longBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz12345678==";
+    const result = verifySanitization(`data: ${longBase64}`);
+    expect(result.containsPotentialSecrets).toBe(true);
+    expect(result.warnings.some(w => w.includes("Long Base64"))).toBe(true);
+  });
+
+  it("can detect multiple issues in one text", () => {
+    const text = "key = XXXXXXXXXXXXXXXXXXXXXXXXXXXX and token = YYYYYYYYYYYYYYYYYYYYYYYY";
+    const result = verifySanitization(text);
+    expect(result.containsPotentialSecrets).toBe(true);
+    expect(result.warnings.length).toBeGreaterThan(0);
   });
 });

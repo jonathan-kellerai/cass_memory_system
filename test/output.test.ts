@@ -108,6 +108,8 @@ describe("output.ts", () => {
     expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => agentIcon("claude-code"))).toBe("🟣");
     expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => agentIcon("codex-cli"))).toBe("🟢");
     expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => agentIcon("cursor"))).toBe("🔵");
+    expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => agentIcon("aider"))).toBe("🟡");
+    expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => agentIcon("pi_agent"))).toBe("🟠");
     expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => agentIconPrefix("cursor"))).toBe("🔵 ");
   });
 
@@ -117,8 +119,17 @@ describe("output.ts", () => {
   });
 
   test("formatCheckStatusBadge + formatSafetyBadge switch between emoji and text", () => {
+    // pass status
     expect(withEnv({ CASS_MEMORY_NO_EMOJI: "1" }, () => formatCheckStatusBadge("pass"))).toBe("PASS");
     expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => formatCheckStatusBadge("pass"))).toBe("✅");
+
+    // warn status
+    expect(withEnv({ CASS_MEMORY_NO_EMOJI: "1" }, () => formatCheckStatusBadge("warn"))).toBe("WARN");
+    expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => formatCheckStatusBadge("warn"))).toBe("⚠️");
+
+    // fail status
+    expect(withEnv({ CASS_MEMORY_NO_EMOJI: "1" }, () => formatCheckStatusBadge("fail"))).toBe("FAIL");
+    expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => formatCheckStatusBadge("fail"))).toBe("❌");
 
     expect(withEnv({ CASS_MEMORY_NO_EMOJI: "1" }, () => formatSafetyBadge("manual"))).toBe("MANUAL");
     expect(withEnv({ CASS_MEMORY_NO_EMOJI: undefined }, () => formatSafetyBadge("manual"))).toBe("📝");
