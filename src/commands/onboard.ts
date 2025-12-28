@@ -183,7 +183,8 @@ async function sampleDiverseSessions(options: SampleOptions = {}): Promise<{
   const sessions: Map<string, SessionSample> = new Map();
 
   const totalQueries = queries.length;
-  let queryIndex = 0;
+  let queriesCompleted = 0;
+  
   if (typeof options.onProgress === "function") {
     try {
       options.onProgress({ current: 0, total: totalQueries, message: "Sampling sessions..." });
@@ -192,50 +193,64 @@ async function sampleDiverseSessions(options: SampleOptions = {}): Promise<{
     }
   }
 
-  for (const query of queries) {
-    // Fetch more than needed to account for filtering
+  // Run in batches to avoid spawning too many processes/SSH connections at once
+  const BATCH_SIZE = 3;
+  for (let i = 0; i < queries.length; i += BATCH_SIZE) {
     if (sessions.size >= limit * 2) break;
 
-    queryIndex += 1;
+    const batch = queries.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(async (query) => {
+      // Check limit inside the parallel execution too (optimization)
+      if (sessions.size >= limit * 2) return;
+
+      try {
+        const searchOpts: CassSearchOptions = {
+          limit: 5,
+          days,
+          workspace: options.workspace,
+          agent: options.agent,
+        };
+        const { hits } = await safeCassSearchWithDegraded(query, searchOpts, config.cassPath, config);
+        
+        for (const hit of hits) {
+          if (sessions.size >= limit * 2) break; // strict limit check
+          
+          if (!sessions.has(hit.source_path)) {
+            const session: SessionSample = {
+              path: hit.source_path,
+              agent: hit.agent,
+              workspace: hit.workspace || path.dirname(hit.source_path),
+              snippet: hit.snippet,
+              score: hit.score ?? 0,
+            };
+
+            // Score against gaps if analysis is provided
+            if (options.gapAnalysis) {
+              const gapResult = scoreSessionForGaps(hit.snippet, options.gapAnalysis);
+              session.gapScore = gapResult.score;
+              session.matchedCategories = gapResult.matchedCategories;
+              session.gapReason = gapResult.reason;
+            }
+
+            sessions.set(hit.source_path, session);
+          }
+        }
+      } catch {
+        // Ignore search errors
+      }
+    }));
+
+    queriesCompleted += batch.length;
     if (typeof options.onProgress === "function") {
       try {
-        options.onProgress({ current: queryIndex, total: totalQueries, message: `Searching: ${query}` });
+        options.onProgress({ 
+          current: Math.min(queriesCompleted, totalQueries), 
+          total: totalQueries, 
+          message: `Sampling sessions (${sessions.size} found)...` 
+        });
       } catch {
         // Best-effort
       }
-    }
-
-    try {
-      const searchOpts: CassSearchOptions = {
-        limit: 5,
-        days,
-        workspace: options.workspace,
-        agent: options.agent,
-      };
-      const { hits } = await safeCassSearchWithDegraded(query, searchOpts, config.cassPath, config);
-      for (const hit of hits) {
-        if (!sessions.has(hit.source_path)) {
-          const session: SessionSample = {
-            path: hit.source_path,
-            agent: hit.agent,
-            workspace: hit.workspace || path.dirname(hit.source_path),
-            snippet: hit.snippet,
-            score: hit.score ?? 0,
-          };
-
-          // Score against gaps if analysis is provided
-          if (options.gapAnalysis) {
-            const gapResult = scoreSessionForGaps(hit.snippet, options.gapAnalysis);
-            session.gapScore = gapResult.score;
-            session.matchedCategories = gapResult.matchedCategories;
-            session.gapReason = gapResult.reason;
-          }
-
-          sessions.set(hit.source_path, session);
-        }
-      }
-    } catch {
-      // Ignore search errors
     }
   }
 
