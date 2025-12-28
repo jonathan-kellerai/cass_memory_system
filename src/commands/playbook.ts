@@ -5,7 +5,7 @@ import { withLock } from "../lock.js";
 import { getEffectiveScore, getDecayedCounts } from "../scoring.js";
 import { PlaybookBullet, Playbook, PlaybookSchema, PlaybookBulletSchema, ErrorCode } from "../types.js";
 import { validateRule, formatValidationResult, hasIssues, type ValidationResult } from "../rule-validation.js";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
 import yaml from "yaml";
@@ -439,7 +439,7 @@ export async function playbookCommand(
         // But for import, we usually expect it to exist or we create it.
         // Let's assume we can create it if the dir exists.
         if (!(await fileExists(repoDir))) {
-           await fs.mkdir(repoDir, { recursive: true });
+           await mkdir(repoDir, { recursive: true });
         }
       }
     }

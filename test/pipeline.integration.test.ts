@@ -71,7 +71,7 @@ describe("Pipeline integration: diary -> reflect -> curate (stubbed LLM)", () =>
     // Set up sequential responses for multi-iteration reflection
     let callCount = 0;
     const responses = [
-      { deltas: [{ type: "harmful" as const, bulletId: "b-invert", reason: "dangerous", sourceSession: diary.sessionPath }] },
+      { deltas: [{ type: "harmful" as const, bulletId: "b-invert", reason: "caused_bug" as const, sourceSession: diary.sessionPath }] },
       { deltas: [] },
     ];
 

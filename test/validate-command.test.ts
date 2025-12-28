@@ -9,7 +9,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { validateCommand } from "../src/commands/validate.js";
-import { evidenceCountGate, EvidenceGateResult } from "../src/validate.js";
+import { evidenceCountGate } from "../src/validate.js";
+import type { EvidenceGateResult } from "../src/types.js";
 import { withTempCassHome, TestEnv } from "./helpers/temp.js";
 import { withTempGitRepo } from "./helpers/git.js";
 import { loadConfig } from "../src/config.js";
@@ -161,7 +162,8 @@ describe("evidenceCountGate", () => {
           expect(result.passed).toBe(true);
           expect(result.suggestedState).toBe("draft");
           // May return "No historical evidence" or proceed to ambiguous
-          expect(["draft"]).toContain(result.suggestedState);
+          expect(result.suggestedState).toBeDefined();
+          expect(["draft"]).toContain(result.suggestedState!);
         } finally {
           process.chdir(originalCwd);
         }
@@ -233,7 +235,8 @@ describe("evidenceCountGate", () => {
           // Check all required fields exist
           expect(typeof result.passed).toBe("boolean");
           expect(typeof result.reason).toBe("string");
-          expect(["draft", "active"]).toContain(result.suggestedState);
+          expect(result.suggestedState).toBeDefined();
+          expect(["draft", "active"]).toContain(result.suggestedState!);
           expect(typeof result.sessionCount).toBe("number");
           expect(typeof result.successCount).toBe("number");
           expect(typeof result.failureCount).toBe("number");

@@ -11,6 +11,7 @@ import {
   resolveGitRoot
 } from "../utils.js";
 import { ErrorCode } from "../types.js";
+import { iconPrefix } from "../output.js";
 
 export async function guardCommand(flags: { install?: boolean; git?: boolean; json?: boolean }) {
   const startedAtMs = Date.now();

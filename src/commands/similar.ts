@@ -3,7 +3,7 @@ import { loadConfig } from "../config.js";
 import { loadMergedPlaybook, getActiveBullets } from "../playbook.js";
 import { findSimilarBulletsSemantic, getSemanticStatus, formatSemanticModeMessage } from "../semantic.js";
 import { getEffectiveScore } from "../scoring.js";
-import { jaccardSimilarity, truncate, getCliName, printJsonResult, reportError } from "../utils.js";
+import { jaccardSimilarity, truncate, getCliName, printJsonResult, reportError, warn } from "../utils.js";
 import { ErrorCode, PlaybookBullet } from "../types.js";
 import { formatRule, formatTipPrefix, getOutputStyle, wrapText } from "../output.js";
 
