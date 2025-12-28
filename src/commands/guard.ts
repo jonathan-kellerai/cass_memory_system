@@ -1,17 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { TRAUMA_GUARD_SCRIPT } from "../trauma_guard_script.js";
-import { 
-  ensureDir, 
-  fileExists, 
-  getCliName, 
+import { TRAUMA_GUARD_SCRIPT, GIT_PRECOMMIT_HOOK } from "../trauma_guard_script.js";
+import {
+  ensureDir,
+  fileExists,
+  getCliName,
   printJsonResult,
-  reportError 
+  reportError,
+  resolveGitRoot
 } from "../utils.js";
 import { ErrorCode } from "../types.js";
 
-export async function guardCommand(flags: { install?: boolean; json?: boolean }) {
+export async function guardCommand(flags: { install?: boolean; git?: boolean; json?: boolean }) {
   const startedAtMs = Date.now();
   const command = "guard";
   const cli = getCliName();
@@ -22,10 +23,15 @@ export async function guardCommand(flags: { install?: boolean; json?: boolean })
       return;
     }
 
-    reportError("Missing required flag: --install", {
+    if (flags.git) {
+      await installGitHook(flags.json);
+      return;
+    }
+
+    reportError("Missing required flag: --install or --git", {
       code: ErrorCode.MISSING_REQUIRED,
-      hint: `Example: ${cli} guard --install --json`,
-      details: { missing: "--install" },
+      hint: `Examples:\n  ${cli} guard --install    # Claude Code hook\n  ${cli} guard --git        # Git pre-commit hook`,
+      details: { missing: "--install or --git" },
       json: flags.json,
       command,
       startedAtMs,
@@ -150,4 +156,94 @@ export async function installGuard(json?: boolean, silent?: boolean) {
     console.log(chalk.green(`✓ ${alreadyInstalled ? "Verified" : "Updated"} ${settingsPath}`));
     console.log(chalk.bold.yellow("\nIMPORTANT: You must restart Claude Code for the hook to take effect."));
   }
+}
+
+/**
+ * Install git pre-commit hook for trauma pattern detection.
+ */
+export async function installGitHook(json?: boolean, silent?: boolean): Promise<boolean> {
+  const startedAtMs = Date.now();
+  const command = "guard";
+  const cli = getCliName();
+  const scriptName = "trauma-guard-precommit.py";
+
+  // Find git repo root
+  const repoDir = await resolveGitRoot();
+  if (!repoDir) {
+    if (silent) return false;
+    reportError("Not in a git repository.", {
+      code: ErrorCode.FILE_NOT_FOUND,
+      hint: "Run this command from within a git repository.",
+      json,
+      command,
+      startedAtMs,
+    });
+    return false;
+  }
+
+  const gitHooksDir = path.join(repoDir, ".git", "hooks");
+  const preCommitPath = path.join(gitHooksDir, "pre-commit");
+
+  // Ensure hooks directory exists
+  await ensureDir(gitHooksDir);
+
+  // Check if pre-commit hook exists
+  let existingHook = "";
+  const hookExists = await fileExists(preCommitPath);
+  if (hookExists) {
+    existingHook = await fs.readFile(preCommitPath, "utf-8");
+    // Check if our hook is already installed
+    if (existingHook.includes("trauma-guard-precommit") || existingHook.includes("HOT STOVE")) {
+      if (silent) return true;
+      if (json) {
+        printJsonResult(command, {
+          message: "Git pre-commit trauma guard already installed.",
+          alreadyInstalled: true,
+          hookPath: preCommitPath,
+        }, { startedAtMs });
+      } else {
+        console.log(chalk.blue(`• Git pre-commit trauma guard already installed at ${preCommitPath}`));
+      }
+      return true;
+    }
+  }
+
+  // Write the guard script to a separate file
+  const guardScriptPath = path.join(gitHooksDir, scriptName);
+  await fs.writeFile(guardScriptPath, GIT_PRECOMMIT_HOOK, { encoding: "utf-8", mode: 0o755 });
+
+  // Create or update pre-commit hook to call our script
+  let newHookContent: string;
+  if (hookExists && existingHook.trim()) {
+    // Append to existing hook
+    const callLine = `\n# Project Hot Stove: Trauma Guard\n"${guardScriptPath}" || exit 1\n`;
+    newHookContent = existingHook.trimEnd() + callLine;
+  } else {
+    // Create new hook
+    newHookContent = `#!/bin/sh
+# Git pre-commit hook with Project Hot Stove trauma guard
+
+# Trauma Guard: Block commits matching dangerous patterns
+"${guardScriptPath}" || exit 1
+`;
+  }
+
+  await fs.writeFile(preCommitPath, newHookContent, { encoding: "utf-8", mode: 0o755 });
+
+  if (silent) return true;
+
+  if (json) {
+    printJsonResult(command, {
+      message: "Git pre-commit trauma guard installed successfully.",
+      alreadyInstalled: false,
+      hookPath: preCommitPath,
+      guardScriptPath,
+    }, { startedAtMs });
+  } else {
+    console.log(chalk.green(`✓ Installed ${scriptName} to ${gitHooksDir}`));
+    console.log(chalk.green(`✓ Updated ${preCommitPath}`));
+    console.log(chalk.bold.yellow("\nThe trauma guard will now check staged changes before each commit."));
+    console.log(chalk.gray("Use 'git commit --no-verify' to bypass (not recommended)."));
+  }
+  return true;
 }

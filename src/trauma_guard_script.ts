@@ -144,3 +144,139 @@ def main():
 if __name__ == "__main__":
     main()
 `;
+
+/**
+ * Git pre-commit hook script for trauma pattern detection.
+ * Scans staged changes for dangerous patterns before allowing commits.
+ */
+export const GIT_PRECOMMIT_HOOK = String.raw`#!/usr/bin/env python3
+"""
+Git Pre-Commit Trauma Guard for Project Hot Stove.
+Scans staged changes for dangerous patterns before allowing commits.
+"""
+import json
+import sys
+import re
+import os
+import subprocess
+from pathlib import Path
+
+GLOBAL_TRAUMA_FILE = Path.home() / ".cass-memory" / "traumas.jsonl"
+
+def find_repo_root():
+    """Find the root of the current git repository."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True
+        )
+        return Path(result.stdout.strip())
+    except:
+        return None
+
+def load_traumas():
+    """Load active traumas from global and project storage."""
+    traumas = []
+
+    # Load Global
+    if GLOBAL_TRAUMA_FILE.exists():
+        try:
+            with open(GLOBAL_TRAUMA_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            t = json.loads(line)
+                            if isinstance(t, dict) and t.get("status") == "active":
+                                traumas.append(t)
+                        except:
+                            pass
+        except Exception:
+            pass
+
+    # Load Project
+    repo_root = find_repo_root()
+    if repo_root:
+        repo_file = repo_root / ".cass" / "traumas.jsonl"
+        if repo_file.exists():
+            try:
+                with open(repo_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            try:
+                                t = json.loads(line)
+                                if isinstance(t, dict) and t.get("status") == "active":
+                                    traumas.append(t)
+                            except:
+                                pass
+            except Exception:
+                pass
+
+    return traumas
+
+def get_staged_diff():
+    """Get the staged changes as text."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--unified=0"],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout
+    except:
+        return ""
+
+def check_content(content, traumas):
+    """Check content against trauma patterns."""
+    for trauma in traumas:
+        if not isinstance(trauma, dict):
+            continue
+
+        pattern = trauma.get("pattern")
+        if not isinstance(pattern, str) or not pattern:
+            continue
+
+        try:
+            if re.search(pattern, content, re.IGNORECASE):
+                return trauma
+        except re.error:
+            continue
+    return None
+
+def main():
+    traumas = load_traumas()
+    if not traumas:
+        sys.exit(0)  # No traumas to check
+
+    diff = get_staged_diff()
+    if not diff:
+        sys.exit(0)  # Nothing staged
+
+    match = check_content(diff, traumas)
+    if match:
+        trigger = match.get("trigger_event") or {}
+        msg = trigger.get("human_message") or "This pattern matches a previous catastrophe."
+        pattern = match.get("pattern") or "<unknown>"
+        trauma_id = match.get("id") or "<unknown>"
+        severity = match.get("severity") or "CRITICAL"
+
+        use_emoji = os.environ.get("CASS_MEMORY_NO_EMOJI") is None
+        banner = (
+            "🔥 HOT STOVE: COMMIT BLOCKED 🔥"
+            if use_emoji
+            else "[HOT STOVE] COMMIT BLOCKED"
+        )
+
+        print(f"\n{banner}")
+        print(f"\nBLOCKED: Staged changes match a registered TRAUMA pattern.")
+        print(f"Severity: {severity}")
+        print(f"Pattern: {pattern}")
+        print(f"Reason: {msg}")
+        print(f"\nTo proceed anyway, use: git commit --no-verify")
+        print(f"To heal this trauma: cm trauma heal {trauma_id}")
+        print()
+        sys.exit(1)
+
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+`;

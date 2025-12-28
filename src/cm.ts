@@ -240,6 +240,7 @@ playbook.command("import")
   .description("Import playbook from file")
   .argument("<file>", "Path to playbook file (YAML or JSON)")
   .option("--replace", "Replace existing bullets with same ID")
+  .option("--repo", "Import to repo-level playbook instead of global")
   .option("-j, --json", "Output JSON result")
   .addHelpText("after", () =>
     formatCommandExamples([
@@ -787,10 +788,12 @@ onboard.command("reset")
 program.command("guard")
   .description("Manage mechanical safety guards (Project Hot Stove)")
   .option("--install", "Install trauma guard hook to .claude/hooks")
+  .option("--git", "Install git pre-commit hook to block dangerous patterns")
   .option("-j, --json", "Output JSON")
   .addHelpText("after", () =>
     formatCommandExamples([
-      "guard --install",
+      "guard --install          # Claude Code hook",
+      "guard --git              # Git pre-commit hook",
       "guard --install --json",
     ])
   )

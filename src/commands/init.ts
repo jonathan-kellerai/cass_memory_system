@@ -1,4 +1,4 @@
-import { installGuard } from "./guard.js";
+import { installGuard, installGitHook } from "./guard.js";
 import { getDefaultConfig } from "../config.js";
 import { createEmptyPlaybook, loadPlaybook, savePlaybook } from "../playbook.js";
 import { withLock } from "../lock.js";
@@ -278,6 +278,39 @@ export async function initCommand(options: InitOptions) {
       }
     }
 
+    // Offer git pre-commit hook installation if in a git repo
+    if (await fileExists(".git")) {
+      const isInteractive = options.interactive !== false && !options.json && process.stdin.isTTY;
+      if (isInteractive) {
+        console.log("");
+        console.log(chalk.bold("Git Pre-Commit Guard (Optional):"));
+        console.log("Install a pre-commit hook to block commits containing dangerous patterns?");
+        console.log(chalk.dim("This checks staged changes against your trauma patterns before each commit."));
+        console.log("");
+
+        const installGit = await promptYesNo("Install git pre-commit trauma guard? [y/N]: ");
+        if (installGit) {
+          try {
+            await installGitHook(false, false);
+          } catch (e) {
+            warn("Failed to install git pre-commit hook. You can install manually with: cm guard --git");
+          }
+        } else {
+          console.log(chalk.gray("Skipped. You can install later with: cm guard --git"));
+        }
+      } else {
+        // Non-interactive: silently try to install
+        try {
+          const installed = await installGitHook(false, true);
+          if (installed) {
+            console.log(chalk.green(`${icon("success")} Auto-installed git pre-commit trauma guard`));
+          }
+        } catch (e) {
+          // Ignore failures in non-interactive mode
+        }
+      }
+    }
+
     // Run Trauma Scan if interactive and cass is available
     if (options.interactive !== false && !options.json && process.stdin.isTTY && cassOk) {
       await runTraumaScan(config);
@@ -476,6 +509,16 @@ async function initRepoCommand(options: InitOptions) {
 
     if (starterOutcome) {
       console.log(chalk.green(`${icon("success")} Applied starter "${starterOutcome.name}" (${starterOutcome.added} added, ${starterOutcome.skipped} skipped)`));
+    }
+
+    // Auto-install git hook for trauma guard
+    try {
+      const hookInstalled = await installGitHook(false, true);
+      if (hookInstalled) {
+        console.log(chalk.green(`${icon("success")} Installed git pre-commit trauma guard`));
+      }
+    } catch {
+      // Ignore failures
     }
 
     console.log("");
