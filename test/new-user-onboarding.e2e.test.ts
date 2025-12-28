@@ -342,13 +342,8 @@ describe("E2E: New User Onboarding", () => {
 
       const cassStubPath = await makeCassStub(testDir, { search: searchOut }, "", "cass-stub");
 
-      // Point config.cassPath at the stub so onboarding sampling uses it.
-      const configPath = join(testDir, ".cass-memory", "config.json");
-      const configJson = JSON.parse(readFileSync(configPath, "utf-8")) as any;
-      configJson.cassPath = cassStubPath;
-      writeFileSync(configPath, JSON.stringify(configJson, null, 2), "utf-8");
-
-      const sample = runCm(["onboard", "sample", "--limit", "1", "--json"], testDir);
+      // Pass stub path via CASS_PATH env var (overrides the default __nonexistent__ in runCm)
+      const sample = runCm(["onboard", "sample", "--limit", "1", "--json"], testDir, { CASS_PATH: cassStubPath });
       expect(sample.exitCode).toBe(0);
 
       const sampleJson = JSON.parse(sample.stdout) as any;
