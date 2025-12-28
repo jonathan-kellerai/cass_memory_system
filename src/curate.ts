@@ -243,11 +243,21 @@ export function curatePlaybook(
 ): CurationResult {
   // Use context playbook (merged) for dedup checks if available, otherwise target
   const referencePlaybook = contextPlaybook || targetPlaybook;
-  const existingHashes = buildHashCache(referencePlaybook);
-  
-  // Pre-compute conflict metadata for the reference playbook once
+
+  // Optimization: Pre-compute maps for O(1) lookups and conflict detection.
+  // This map tracks content hashes from BOTH the reference playbook AND newly added bullets in this batch.
+  const bulletContentMap = new Map<string, PlaybookBullet>();
+  for (const b of referencePlaybook.bullets) {
+    bulletContentMap.set(hashContent(b.content), b);
+  }
+
+  // Pre-compute conflict metadata for the reference playbook once.
+  // We will append to this array as we add new bullets to ensure conflicts are caught within the batch.
   const conflictMeta = referencePlaybook.bullets.map(computeConflictMeta);
-  
+
+  // Keep track of bullets added in this batch for semantic similarity checks
+  const newlyAddedBullets: PlaybookBullet[] = [];
+
   const decisionLog: DecisionLogEntry[] = [];
 
   const result: CurationResult = {
@@ -277,7 +287,7 @@ export function curatePlaybook(
         const hash = hashContent(content);
 
         // Conflict detection (warnings only)
-        // Use optimized version with pre-computed meta
+        // Checks against reference AND newly added bullets (via updated conflictMeta)
         const conflicts = detectConflictsWithMeta(content, conflictMeta);
         for (const c of conflicts) {
           result.conflicts.push({
@@ -293,13 +303,12 @@ export function curatePlaybook(
           });
         }
 
-        // 1. Exact duplicate check (against reference/merged)
-        // Find the bullet in the reference playbook (could be merged context)
-        const exactMatch = referencePlaybook.bullets.find(b => hashContent(b.content) === hash);
-        
+        // 1. Exact duplicate check (O(1) using map)
+        const exactMatch = bulletContentMap.get(hash);
+
         if (exactMatch) {
           const isDeprecated = Boolean(exactMatch.deprecated) || exactMatch.maturity === "deprecated" || exactMatch.state === "retired";
-          
+
           if (isDeprecated) {
              logDecision(decisionLog, "dedup", "skipped", "Exact duplicate exists but is deprecated", {
                content: content.slice(0, 100),
@@ -310,7 +319,7 @@ export function curatePlaybook(
 
           // Try to find it in the target playbook (the one we are writing to)
           const targetBullet = findBullet(targetPlaybook, exactMatch.id);
-          
+
           if (targetBullet) {
             targetBullet.feedbackEvents.push({
               type: "helpful",
@@ -335,8 +344,25 @@ export function curatePlaybook(
           break;
         }
 
-        // 2. Semantic duplicate check (against reference/merged)
-        const similar = findSimilarBullet(content, referencePlaybook, config.dedupSimilarityThreshold);
+        // 2. Semantic duplicate check
+        // Check against reference playbook
+        let similar = findSimilarBullet(content, referencePlaybook, config.dedupSimilarityThreshold);
+        
+        // Also check against newly added bullets in this batch if not found in reference
+        if (!similar) {
+          // Use the same finding logic but for the local array
+          // We can't reuse findSimilarBullet directly because it expects a Playbook object,
+          // so we construct a temporary one or inline the logic.
+          // Inline logic:
+          const threshold = config.dedupSimilarityThreshold;
+          for (const b of newlyAddedBullets) {
+            if (jaccardSimilarity(content, b.content) >= threshold) {
+              similar = b;
+              break;
+            }
+          }
+        }
+
         if (similar) {
           const similarIsDeprecated =
             Boolean(similar.deprecated) ||
@@ -396,7 +422,7 @@ export function curatePlaybook(
               details: { similarTo: similar.content.slice(0, 100), similarity: config.dedupSimilarityThreshold }
             });
           } else {
-            logDecision(decisionLog, "dedup", "skipped", "Similar bullet exists in repo playbook", {
+            logDecision(decisionLog, "dedup", "skipped", "Similar bullet exists in repo playbook (or just added)", {
               content: content.slice(0, 100),
               details: { similarTo: similar.content.slice(0, 100) }
             });
@@ -428,7 +454,11 @@ export function curatePlaybook(
           newBullet.reasoning = delta.reason.trim();
         }
 
-        existingHashes.add(hash);
+        // Update caches to catch duplicates later in this batch
+        bulletContentMap.set(hash, newBullet);
+        conflictMeta.push(computeConflictMeta(newBullet));
+        newlyAddedBullets.push(newBullet);
+
         applied = true;
         logDecision(decisionLog, "add", "accepted", "New bullet added to playbook", {
           bulletId: newBullet.id,
