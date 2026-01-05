@@ -65,7 +65,7 @@ resolve_version() {
     info "Resolved latest version: $VERSION"
   else
     # Fallback to known-good version (update when releasing major versions)
-    VERSION="v0.2.1"
+    VERSION="v0.2.2"
     warn "Could not resolve latest version; defaulting to $VERSION"
   fi
 }
