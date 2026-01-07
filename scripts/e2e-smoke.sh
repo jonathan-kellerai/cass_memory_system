@@ -331,8 +331,9 @@ assert_json_success "$ARTIFACTS/S24_undo.out"
 run_expect_fail S25_audit bun run "$CM_BIN" audit --days 1 --json
 assert_json_failure "$ARTIFACTS/S25_audit.out"
 
-run_expect_fail S26_validate bun run "$CM_BIN" validate "Use transactions for writes" --json
-assert_json_failure "$ARTIFACTS/S26_validate.out"
+# validate now returns success with ACCEPT_WITH_CAUTION when no evidence found
+run_step S26_validate bun run "$CM_BIN" validate "Use transactions for writes" --json
+assert_json_success "$ARTIFACTS/S26_validate.out"
 
 run_step S27_reflect bun run "$CM_BIN" reflect --days 1 --json
 assert_json_success "$ARTIFACTS/S27_reflect.out"
