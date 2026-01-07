@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { evidenceCountGate, normalizeValidatorVerdict } from "../src/validate.js";
+import { evidenceCountGate, normalizeValidatorVerdict, validateDelta } from "../src/validate.js";
 import type { CassRunner } from "../src/cass.js";
 import { createTestConfig } from "./helpers/factories.js";
 import { withTempDir } from "./helpers/temp.js";
+import type { PlaybookDelta, Bullet } from "../src/types.js";
 
 function createCassRunnerForSearch(stdout: string): CassRunner {
   return {
@@ -133,5 +134,92 @@ describe("validate.ts evidence gate", () => {
       expect(result.suggestedState).toBe("draft");
       expect(result.reason).toContain("ambiguous");
     });
+  });
+});
+
+describe("validateDelta", () => {
+  function createDelta(content: string, type: "add" | "remove" | "update" = "add"): PlaybookDelta {
+    const bullet: Bullet = {
+      id: "test-bullet-1",
+      content,
+      created: new Date().toISOString(),
+      score: 0.5,
+      categories: [],
+      relatedSessions: [],
+      active: true,
+    };
+    return { type, bullet };
+  }
+
+  it("skips validation for non-add delta types", async () => {
+    const config = createTestConfig({ validationEnabled: true });
+    const delta = createDelta("Any content", "remove");
+
+    const result = await validateDelta(delta, config);
+
+    expect(result.valid).toBe(true);
+    expect(result.decisionLog).toBeDefined();
+    expect(result.decisionLog![0].action).toBe("skipped");
+    expect(result.decisionLog![0].reason).toContain("Non-add delta type");
+  });
+
+  it("skips validation when validation is disabled in config", async () => {
+    const config = createTestConfig({ validationEnabled: false });
+    const delta = createDelta("Always validate user input before processing");
+
+    const result = await validateDelta(delta, config);
+
+    expect(result.valid).toBe(true);
+    expect(result.decisionLog).toBeDefined();
+    expect(result.decisionLog![0].action).toBe("skipped");
+    expect(result.decisionLog![0].reason).toContain("Validation disabled");
+  });
+
+  it("skips validation for content shorter than 15 characters", async () => {
+    const config = createTestConfig({ validationEnabled: true });
+    const delta = createDelta("short");
+
+    const result = await validateDelta(delta, config);
+
+    expect(result.valid).toBe(true);
+    expect(result.decisionLog).toBeDefined();
+    expect(result.decisionLog![0].action).toBe("skipped");
+    expect(result.decisionLog![0].reason).toContain("Content too short");
+  });
+
+  it("skips validation when bullet content is empty", async () => {
+    const config = createTestConfig({ validationEnabled: true });
+    const delta = createDelta("");
+
+    const result = await validateDelta(delta, config);
+
+    expect(result.valid).toBe(true);
+    expect(result.decisionLog).toBeDefined();
+    expect(result.decisionLog![0].action).toBe("skipped");
+    expect(result.decisionLog![0].reason).toContain("Content too short");
+  });
+
+  it("logs content preview in decision log for disabled validation", async () => {
+    const config = createTestConfig({ validationEnabled: false });
+    const delta = createDelta("Always validate user input before processing requests");
+
+    const result = await validateDelta(delta, config);
+
+    expect(result.valid).toBe(true);
+    expect(result.decisionLog).toBeDefined();
+    expect(result.decisionLog![0].content).toBe("Always validate user input before processing requests");
+  });
+
+  it("includes decision log for update delta type", async () => {
+    const config = createTestConfig({ validationEnabled: true });
+    const delta = createDelta("Update this content", "update");
+
+    const result = await validateDelta(delta, config);
+
+    expect(result.valid).toBe(true);
+    expect(result.decisionLog).toBeArray();
+    expect(result.decisionLog!.length).toBeGreaterThan(0);
+    expect(result.decisionLog![0].phase).toBe("add");
+    expect(result.decisionLog![0].timestamp).toBeString();
   });
 });
