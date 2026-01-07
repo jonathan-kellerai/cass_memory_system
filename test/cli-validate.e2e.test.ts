@@ -77,6 +77,7 @@ function createMockLLMIO(result: {
   confidence: number;
   reason: string;
   suggestedRefinement?: string;
+  evidence?: Array<{ sessionPath: string; snippet: string; supports: boolean }>;
 }): LLMIO {
   return {
     generateObject: async <T>() => ({
@@ -85,7 +86,8 @@ function createMockLLMIO(result: {
         valid: result.verdict !== "REJECT",
         confidence: result.confidence,
         reason: result.reason,
-        suggestedRefinement: result.suggestedRefinement
+        suggestedRefinement: result.suggestedRefinement,
+        evidence: result.evidence ?? [] // LLM validator returns evidence array
       } as unknown as T,
       usage: { promptTokens: 100, completionTokens: 50 }
     })
@@ -562,9 +564,13 @@ describe("E2E: CLI validate command", () => {
           const output = capture.all();
           const parsed = JSON.parse(output);
 
-          // Evidence should have outcome classification
-          if (parsed.data.evidence && parsed.data.evidence.length > 0) {
+          // Evidence should be present and have outcome classification
+          expect(parsed.data.evidence).toBeDefined();
+          expect(Array.isArray(parsed.data.evidence)).toBe(true);
+          // Evidence array should exist (may be empty if gate auto-accepts)
+          if (parsed.data.evidence.length > 0) {
             const outcomes = parsed.data.evidence.map((e: any) => e.outcome);
+            // At least one should be classified as success based on our mock data
             expect(outcomes.some((o: string) => o === "success")).toBe(true);
           }
         });
@@ -611,8 +617,13 @@ describe("E2E: CLI validate command", () => {
           const output = capture.all();
           const parsed = JSON.parse(output);
 
-          if (parsed.data.evidence && parsed.data.evidence.length > 0) {
+          // Evidence should be present
+          expect(parsed.data.evidence).toBeDefined();
+          expect(Array.isArray(parsed.data.evidence)).toBe(true);
+          // Evidence array should exist (may be empty if gate auto-rejects)
+          if (parsed.data.evidence.length > 0) {
             const outcomes = parsed.data.evidence.map((e: any) => e.outcome);
+            // At least one should be classified as failure based on our mock data
             expect(outcomes.some((o: string) => o === "failure")).toBe(true);
           }
         });
