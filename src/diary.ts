@@ -90,6 +90,25 @@ async function appendCrossAgentAuditLog(
 export function formatRawSession(content: string, ext: string): string {
   const normalizedExt = (ext.startsWith(".") ? ext : `.${ext}`).toLowerCase();
 
+  const coerceRawContent = (value: unknown): string | null => {
+    if (!value) return null;
+    if (typeof value === "string") return value;
+    if (Array.isArray(value)) {
+      const parts = value
+        .map((v) => coerceRawContent(v))
+        .filter((v): v is string => Boolean(v));
+      return parts.length ? parts.join("\n") : null;
+    }
+    if (typeof value === "object") {
+      const maybeText = (value as { text?: unknown; content?: unknown; message?: unknown; value?: unknown });
+      if (typeof maybeText.text === "string") return maybeText.text;
+      if (typeof maybeText.content === "string") return maybeText.content;
+      if (typeof maybeText.message === "string") return maybeText.message;
+      if (typeof maybeText.value === "string") return maybeText.value;
+    }
+    return null;
+  };
+
   if (normalizedExt === ".md" || normalizedExt === ".markdown") {
     return content;
   }
@@ -103,8 +122,8 @@ export function formatRawSession(content: string, ext: string): string {
         try {
           const json = JSON.parse(line);
           const role = json.role || "[unknown]";
-          const msgContent = json.content || "[empty]";
-          return `**${role}**: ${msgContent}`;
+          const msgContent = coerceRawContent(json.content ?? json.text ?? json.message);
+          return `**${role}**: ${msgContent ?? "[empty]"}`;
         } catch {
           return `[PARSE ERROR] ${line}`;
         }
@@ -135,8 +154,8 @@ export function formatRawSession(content: string, ext: string): string {
       return messages
         .map((msg) => {
           const role = msg.role || "[unknown]";
-          const msgContent = msg.content || "[empty]";
-          return `**${role}**: ${msgContent}`;
+          const msgContent = coerceRawContent(msg.content ?? msg.text ?? msg.message);
+          return `**${role}**: ${msgContent ?? "[empty]"}`;
         })
         .join("\n\n");
     } catch {

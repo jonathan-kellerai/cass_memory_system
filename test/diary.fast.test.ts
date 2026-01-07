@@ -91,6 +91,19 @@ describe("Fast Diary Extraction", () => {
       expect(formatted).toContain("[PARSE ERROR]");
     });
 
+    test("formats jsonl messages with array content blocks", () => {
+      const lines = [
+        JSON.stringify({
+          role: "user",
+          content: [{ type: "text", text: "Hello" }, { type: "text", text: "World" }]
+        }),
+        JSON.stringify({ role: "assistant", content: [{ text: "Ack" }] })
+      ].join("\n");
+      const formatted = formatRawSession(lines, ".jsonl");
+      expect(formatted).toContain("**user**: Hello\nWorld");
+      expect(formatted).toContain("**assistant**: Ack");
+    });
+
     test("formats json messages from supported containers", () => {
       const payload = JSON.stringify({
         messages: [
@@ -101,6 +114,18 @@ describe("Fast Diary Extraction", () => {
       const formatted = formatRawSession(payload, ".json");
       expect(formatted).toContain("**system**: System note");
       expect(formatted).toContain("**user**: Do work");
+    });
+
+    test("formats json messages with array content blocks", () => {
+      const payload = JSON.stringify({
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Run tests" }] },
+          { role: "assistant", content: [{ text: "Running..." }, { text: "Done" }] }
+        ]
+      });
+      const formatted = formatRawSession(payload, ".json");
+      expect(formatted).toContain("**user**: Run tests");
+      expect(formatted).toContain("**assistant**: Running...\nDone");
     });
 
     test("returns warning for unrecognized json structure", () => {
