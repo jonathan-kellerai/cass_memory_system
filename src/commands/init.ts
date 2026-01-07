@@ -83,6 +83,11 @@ export async function initCommand(options: InitOptions) {
   const startedAtMs = Date.now();
   const command = "init";
   const cli = getCliName();
+  const isInteractive =
+    options.interactive === true &&
+    !options.json &&
+    process.stdin.isTTY &&
+    process.stdout.isTTY;
 
   // If --repo flag is provided, initialize repo-level .cass/ structure
   if (options.repo) {
@@ -118,14 +123,7 @@ export async function initCommand(options: InitOptions) {
 
   const needsForceConfirmation = hasAnyState && Boolean(options.force);
   if (needsForceConfirmation) {
-    const canPrompt = Boolean(
-      options.interactive !== false &&
-      !options.json &&
-      process.stdin.isTTY &&
-      process.stdout.isTTY
-    );
-
-    if (canPrompt) {
+    if (isInteractive) {
       const ok = await promptYesNo(
         `This will back up and overwrite ~/.cass-memory/config.json and playbook.yaml. Continue? [y/N]: `
       );
@@ -158,7 +156,7 @@ export async function initCommand(options: InitOptions) {
 
   // Privacy-first: cross-agent enrichment requires explicit consent.
   // Only prompt in interactive CLI usage (tests/programmatic calls do not pass `interactive`).
-  if (!hasConfig && options.interactive && !options.json && process.stdin.isTTY && process.stdout.isTTY) {
+  if (!hasConfig && isInteractive) {
     console.log(chalk.bold(`\nWelcome to ${cli}!\n`));
     console.log("Cross-Agent Enrichment (Optional):");
     console.log("cass-memory can enrich your diary entries by searching sessions from other agents (Claude, Cursor, Codex, etc.).");
@@ -269,50 +267,47 @@ export async function initCommand(options: InitOptions) {
       );
     }
 
-    if (await fileExists(".claude")) {
-      try {
-        await installGuard(false, true);
-        console.log(chalk.green(`${icon("success")} Auto-installed Project Hot Stove safety guard`));
-      } catch (e) {
-        // Ignore failures
+    if (isInteractive && (await fileExists(".claude"))) {
+      console.log("");
+      console.log(chalk.bold("Project Hot Stove Safety Guard (Optional):"));
+      console.log("Install a Claude Code hook to block destructive commands before they run?");
+      console.log("");
+
+      const installClaude = await promptYesNo("Install Claude Code safety guard? [y/N]: ");
+      if (installClaude) {
+        try {
+          await installGuard(false, false);
+          console.log(chalk.green(`${icon("success")} Installed Project Hot Stove safety guard`));
+        } catch {
+          warn(`Failed to install Claude Code safety guard. You can install manually with: ${cli} guard --install`);
+        }
+      } else {
+        console.log(chalk.gray(`Skipped. You can install later with: ${cli} guard --install`));
       }
     }
 
-    // Offer git pre-commit hook installation if in a git repo
-    if (await fileExists(".git")) {
-      const isInteractive = options.interactive !== false && !options.json && process.stdin.isTTY;
-      if (isInteractive) {
-        console.log("");
-        console.log(chalk.bold("Git Pre-Commit Guard (Optional):"));
-        console.log("Install a pre-commit hook to block commits containing dangerous patterns?");
-        console.log(chalk.dim("This checks staged changes against your trauma patterns before each commit."));
-        console.log("");
+    // Offer git pre-commit hook installation if in a git repo (never auto-install without explicit consent).
+    if (isInteractive && (await fileExists(".git"))) {
+      console.log("");
+      console.log(chalk.bold("Git Pre-Commit Guard (Optional):"));
+      console.log("Install a pre-commit hook to block commits containing dangerous patterns?");
+      console.log(chalk.dim("This checks staged changes against your trauma patterns before each commit."));
+      console.log("");
 
-        const installGit = await promptYesNo("Install git pre-commit trauma guard? [y/N]: ");
-        if (installGit) {
-          try {
-            await installGitHook(false, false);
-          } catch (e) {
-            warn("Failed to install git pre-commit hook. You can install manually with: cm guard --git");
-          }
-        } else {
-          console.log(chalk.gray("Skipped. You can install later with: cm guard --git"));
+      const installGit = await promptYesNo("Install git pre-commit trauma guard? [y/N]: ");
+      if (installGit) {
+        try {
+          await installGitHook(false, false);
+        } catch {
+          warn(`Failed to install git pre-commit hook. You can install manually with: ${cli} guard --git`);
         }
       } else {
-        // Non-interactive: silently try to install
-        try {
-          const installed = await installGitHook(false, true);
-          if (installed) {
-            console.log(chalk.green(`${icon("success")} Auto-installed git pre-commit trauma guard`));
-          }
-        } catch (e) {
-          // Ignore failures in non-interactive mode
-        }
+        console.log(chalk.gray(`Skipped. You can install later with: ${cli} guard --git`));
       }
     }
 
     // Run Trauma Scan if interactive and cass is available
-    if (options.interactive !== false && !options.json && process.stdin.isTTY && cassOk) {
+    if (isInteractive && cassOk) {
       await runTraumaScan(config);
     }
 
@@ -406,14 +401,13 @@ async function initRepoCommand(options: InitOptions) {
 
   const needsForceConfirmation = hasAnyState && Boolean(options.force);
   if (needsForceConfirmation) {
-    const canPrompt = Boolean(
-      options.interactive !== false &&
+    const isInteractive =
+      options.interactive === true &&
       !options.json &&
       process.stdin.isTTY &&
-      process.stdout.isTTY
-    );
+      process.stdout.isTTY;
 
-    if (canPrompt) {
+    if (isInteractive) {
       const ok = await promptYesNo(
         `This will back up and overwrite ${cassDir}/playbook.yaml and blocked.log. Continue? [y/N]: `
       );
@@ -509,16 +503,6 @@ async function initRepoCommand(options: InitOptions) {
 
     if (starterOutcome) {
       console.log(chalk.green(`${icon("success")} Applied starter "${starterOutcome.name}" (${starterOutcome.added} added, ${starterOutcome.skipped} skipped)`));
-    }
-
-    // Auto-install git hook for trauma guard
-    try {
-      const hookInstalled = await installGitHook(false, true);
-      if (hookInstalled) {
-        console.log(chalk.green(`${icon("success")} Installed git pre-commit trauma guard`));
-      }
-    } catch {
-      // Ignore failures
     }
 
     console.log("");
