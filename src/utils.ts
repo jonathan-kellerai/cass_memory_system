@@ -2578,8 +2578,8 @@ export function printJsonResult<T>(
  * @returns Object with camelCase keys (preserves primitives and special objects)
  *
  * @example
- * normalizeYamlKeys({ api_key: "x", max_tokens: 100 })
- * // Returns: { apiKey: "x", maxTokens: 100 }
+ * normalizeYamlKeys({ request_timeout: 30, max_tokens: 100 })
+ * // Returns: { requestTimeout: 30, maxTokens: 100 }
  *
  * normalizeYamlKeys({ nested_obj: { inner_key: "value" } })
  * // Returns: { nestedObj: { innerKey: "value" } }
@@ -2653,8 +2653,8 @@ export function snakeToCamel(str: string): string {
  * @returns Object with snake_case keys
  *
  * @example
- * camelToSnakeKeys({ apiKey: "x", maxTokens: 100 })
- * // Returns: { api_key: "x", max_tokens: 100 }
+ * camelToSnakeKeys({ requestTimeout: 30, maxTokens: 100 })
+ * // Returns: { request_timeout: 30, max_tokens: 100 }
  */
 export function camelToSnakeKeys<T>(obj: T): T {
   if (obj === null || obj === undefined) {
