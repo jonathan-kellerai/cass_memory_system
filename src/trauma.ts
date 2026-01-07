@@ -416,10 +416,10 @@ export async function saveTraumas(entries: TraumaEntry[]): Promise<void> {
       }
     }
 
-    if (!batches.has(targetPath)) {
-      batches.set(targetPath, []);
-    }
-    batches.get(targetPath)!.push(JSON.stringify(entry));
+    const line = JSON.stringify(entry);
+    const bucket = batches.get(targetPath);
+    if (bucket) bucket.push(line);
+    else batches.set(targetPath, [line]);
   }
 
   // Write each batch under a single lock

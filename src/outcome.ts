@@ -321,11 +321,7 @@ export async function applyOutcomeFeedback(
         continue;
       }
 
-      if (!updates.has(targetPath)) {
-        updates.set(targetPath, []);
-      }
-
-      updates.get(targetPath)!.push({
+      const updateItem = {
         bulletId: ruleId,
         feedback: {
           type: scored.type,
@@ -335,9 +331,13 @@ export async function applyOutcomeFeedback(
           context: scored.context,
           decayedValue: scored.decayedValue,
           // Map harmful reason if applicable
-          reason: scored.type === "harmful" ? "other" : undefined
-        }
-      });
+          reason: scored.type === "harmful" ? ("other" as const) : undefined,
+        },
+      };
+
+      const bucket = updates.get(targetPath);
+      if (bucket) bucket.push(updateItem);
+      else updates.set(targetPath, [updateItem]);
     }
   }
 
