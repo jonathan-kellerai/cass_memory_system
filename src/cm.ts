@@ -644,7 +644,7 @@ program.command("serve")
 // --- Outcome ---
 program.command("outcome")
   .description("Record implicit feedback from a session outcome for shown rules")
-  .argument("<status>", "Outcome status: success|failure|mixed")
+  .argument("<status>", "Outcome status: success|failure|mixed|partial")
   .argument("<rules>", "Comma-separated rule ids that were shown")
   .option("--session <path>", "Session path for provenance")
   .option("--duration <seconds>", "Task duration in seconds", toInt)
