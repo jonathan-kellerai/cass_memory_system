@@ -53,13 +53,29 @@ function createMockCassRunner(searchResults: Array<{
   source_path: string;
   snippet: string;
   score?: number;
+  line_number?: number;
+  agent?: string;
+  workspace?: string;
+  title?: string;
+  created_at?: string | number | null;
 }> = []): CassRunner {
+  const normalizedResults = searchResults.map((hit, index) => ({
+    source_path: hit.source_path,
+    line_number: hit.line_number ?? index + 1,
+    agent: hit.agent ?? "mock",
+    workspace: hit.workspace,
+    title: hit.title,
+    snippet: hit.snippet,
+    score: hit.score,
+    created_at: hit.created_at
+  }));
+
   return {
     execFile: async (file: string, args: string[]) => {
       const command = args[0] || "";
 
       if (command === "search") {
-        return { stdout: JSON.stringify(searchResults), stderr: "" };
+        return { stdout: JSON.stringify(normalizedResults), stderr: "" };
       }
 
       return { stdout: "[]", stderr: "" };
