@@ -2,7 +2,20 @@
  * Tests for the info command (cm --info).
  */
 import { describe, it, expect } from "bun:test";
-import { gatherInfo, InfoResult } from "../src/info.js";
+import { gatherInfo, infoCommand, InfoResult } from "../src/info.js";
+
+function captureConsole() {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  };
+  return {
+    logs,
+    output: () => logs.join("\n"),
+    restore: () => { console.log = originalLog; }
+  };
+}
 
 describe("info command", () => {
   describe("gatherInfo", () => {
@@ -81,6 +94,129 @@ describe("info command", () => {
 
       // We're running in the cass_memory_system repo which has .cass/
       expect(info.configuration.workspacePlaybook.path).not.toBeNull();
+    });
+  });
+
+  describe("infoCommand", () => {
+    it("outputs JSON when json option is true", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({ json: true });
+        const output = capture.output();
+        const parsed = JSON.parse(output);
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.command).toBe("info");
+        expect(parsed.data.version).toBeString();
+        expect(parsed.data.configuration).toBeDefined();
+        expect(parsed.data.environment).toBeDefined();
+        expect(parsed.data.dependencies).toBeDefined();
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it("outputs human-readable format by default", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({});
+        const output = capture.output();
+
+        // Should contain key sections
+        expect(output).toContain("Configuration:");
+        expect(output).toContain("Environment:");
+        expect(output).toContain("Dependencies:");
+        expect(output).toContain("Node.js:");
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it("shows OPENAI_API_KEY status in human output", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({});
+        const output = capture.output();
+
+        expect(output).toContain("OPENAI_API_KEY:");
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it("shows ANTHROPIC_API_KEY status in human output", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({});
+        const output = capture.output();
+
+        expect(output).toContain("ANTHROPIC_API_KEY:");
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it("shows cass CLI status in human output", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({});
+        const output = capture.output();
+
+        // Should show either available version or not available
+        expect(output).toMatch(/cass CLI:/i);
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it("shows Bun version when running under Bun", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({});
+        const output = capture.output();
+
+        // Since we're running under Bun, it should show Bun version
+        expect(output).toContain("Bun:");
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it("shows doctor hint in human output", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({});
+        const output = capture.output();
+
+        expect(output).toContain("doctor");
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it("shows global config path in human output", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({});
+        const output = capture.output();
+
+        expect(output).toContain("Global config:");
+      } finally {
+        capture.restore();
+      }
+    });
+
+    it("shows playbook paths in human output", async () => {
+      const capture = captureConsole();
+      try {
+        await infoCommand({});
+        const output = capture.output();
+
+        expect(output).toContain("Global playbook:");
+        expect(output).toContain("Workspace playbook:");
+      } finally {
+        capture.restore();
+      }
     });
   });
 });
