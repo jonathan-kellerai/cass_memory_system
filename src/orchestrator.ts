@@ -7,7 +7,7 @@ import { reflectOnSession } from "./reflect.js";
 import { validateDelta } from "./validate.js";
 import type { LLMIO } from "./llm.js";
 import { curatePlaybook } from "./curate.js";
-import { expandPath, log, warn, error, now, fileExists, resolveRepoDir, generateBulletId, hashContent, jaccardSimilarity } from "./utils.js";
+import { expandPath, log, warn, error, now, fileExists, resolveRepoDir, generateBulletId, hashContent, jaccardSimilarity, ensureDir } from "./utils.js";
 import { withLock } from "./lock.js";
 import path from "node:path";
 
@@ -81,7 +81,11 @@ export async function orchestrateReflection(
   // 1. Lock the Workspace Log to serialize reflection for this specific workspace
   // Use a specific lock suffix to allow ProcessedLog internal locking to work independently
   const reflectionLockPath = `${logPath}.orchestrator`;
-  
+
+  // Ensure reflections directory exists before lock acquisition (fixes #14)
+  // Without this, the lock can fail on fresh installs where ~/.cass-memory/reflections/ doesn't exist
+  await ensureDir(path.dirname(reflectionLockPath));
+
   return withLock(reflectionLockPath, async () => {
     const processedLog = new ProcessedLog(logPath);
     await processedLog.load();

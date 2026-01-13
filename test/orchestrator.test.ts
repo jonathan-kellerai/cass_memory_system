@@ -308,4 +308,58 @@ describe("orchestrateReflection (unit)", () => {
       });
     });
   });
+
+  test("succeeds when reflections directory does not exist (issue #14)", async () => {
+    // This test verifies the fix for GitHub issue #14:
+    // "cm reflect fails with 'Could not acquire lock' when .orchestrator file doesn't exist"
+    //
+    // The bug occurred because withLock would fail on fresh installs where
+    // ~/.cass-memory/reflections/ doesn't exist. The fix ensures the parent
+    // directory is created before attempting lock acquisition.
+    await withIsolatedHome(async (env) => {
+      writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])), "utf-8");
+
+      // Create a session but intentionally do NOT create the reflections directory
+      // The orchestrator should create it automatically before lock acquisition
+      const sessionPath = path.join(env.home, "sessions", "fresh-install.jsonl");
+      writeJsonlSession(sessionPath, [
+        { role: "user", content: "Fresh install test: verifying lock acquisition works without pre-existing reflections dir." },
+        { role: "assistant", content: "The ensureDir call should create the directory before withLock is called." },
+      ]);
+
+      // Verify reflections directory does NOT exist (simulate fresh install)
+      const reflectionsDir = path.join(env.home, ".cass-memory", "reflections");
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(reflectionsDir)).toBe(false);
+
+      const config = createTestConfig({
+        playbookPath: env.playbookPath,
+        diaryDir: env.diaryDir,
+        cassPath: "/__missing__/cass",
+        validationEnabled: false,
+      });
+
+      await withEnv({ CASS_MEMORY_LLM: "none" }, async () => {
+        await withLlmShim({
+          reflector: {
+            deltas: [{
+              type: "add",
+              bullet: { content: "Rule from fresh install test.", category: "testing", tags: [] },
+              reason: "Fresh install",
+              sourceSession: "stub",
+            }]
+          }
+        }, async (io) => {
+          // This should NOT throw "Could not acquire lock" error
+          const outcome = await orchestrateReflection(config, { session: sessionPath, io });
+
+          expect(outcome.errors).toEqual([]);
+          expect(outcome.sessionsProcessed).toBe(1);
+
+          // Verify the reflections directory was created
+          expect(existsSync(reflectionsDir)).toBe(true);
+        });
+      });
+    });
+  });
 });
