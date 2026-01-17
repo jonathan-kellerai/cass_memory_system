@@ -1,7 +1,7 @@
 # .github/workflows/notify-acfs.yml
 #
-# Notifies ACFS when installer scripts change, triggering checksum updates.
-# Use this template for repos with install.sh at the repository root.
+# Notifies ACFS when installer scripts change or releases are published,
+# triggering checksum updates.
 #
 # Setup:
 #   1. Create a PAT with 'contents:read' on agentic_coding_flywheel_setup
@@ -17,12 +17,28 @@ on:
     branches: [main, master]
     paths:
       - 'install.sh'
+      - 'scripts/install.sh'
+  release:
+    types: [published]
   workflow_dispatch:  # Manual trigger for testing
+
+# Prevent duplicate dispatches
+concurrency:
+  group: notify-acfs-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   notify-acfs:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+
     steps:
+      - name: Validate dispatch token
+        if: ${{ secrets.ACFS_REPO_DISPATCH_TOKEN == '' }}
+        run: |
+          echo "::warning::Missing secret ACFS_REPO_DISPATCH_TOKEN. Add a PAT with repo access for Dicklesworthstone/agentic_coding_flywheel_setup."
+          exit 1
+
       - name: Trigger ACFS checksum update
         uses: peter-evans/repository-dispatch@v3
         with:
@@ -31,16 +47,20 @@ jobs:
           event-type: upstream-changed
           client-payload: |
             {
+              "repo": "${{ github.repository }}",
               "tool": "${{ github.event.repository.name }}",
               "ref": "${{ github.ref }}",
               "sha": "${{ github.sha }}",
+              "event": "${{ github.event_name }}",
               "actor": "${{ github.actor }}",
-              "timestamp": "${{ github.event.head_commit.timestamp }}"
+              "timestamp": "${{ github.event.head_commit.timestamp || github.event.release.published_at }}"
             }
 
       - name: Log dispatch
         run: |
-          echo "✅ Dispatched upstream-changed event to ACFS"
+          echo "Dispatched upstream-changed event to ACFS"
+          echo "   Repository: ${{ github.repository }}"
           echo "   Tool: ${{ github.event.repository.name }}"
           echo "   SHA: ${{ github.sha }}"
+          echo "   Event: ${{ github.event_name }}"
           echo "   Triggered by: ${{ github.actor }}"
