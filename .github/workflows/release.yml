@@ -105,6 +105,9 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
 
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -127,3 +130,52 @@ jobs:
           files: install.sh.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ==========================================================================
+  # Notify Package Managers to Update
+  # ==========================================================================
+  notify-homebrew-tap:
+    name: Notify Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: publish-installer
+    steps:
+      - name: Trigger formula update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: Dicklesworthstone/homebrew-tap
+          event-type: formula-update
+          client-payload: |
+            {
+              "tool": "cm",
+              "version": "${{ needs.publish-installer.outputs.version }}"
+            }
+
+      - name: Log dispatch
+        run: |
+          echo "✅ Dispatched formula-update event to homebrew-tap"
+          echo "   Tool: cm"
+          echo "   Version: ${{ needs.publish-installer.outputs.version }}"
+
+  notify-scoop-bucket:
+    name: Notify Scoop Bucket
+    runs-on: ubuntu-latest
+    needs: publish-installer
+    steps:
+      - name: Trigger manifest update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          repository: Dicklesworthstone/scoop-bucket
+          event-type: manifest-update
+          client-payload: |
+            {
+              "tool": "cm",
+              "version": "${{ needs.publish-installer.outputs.version }}"
+            }
+
+      - name: Log dispatch
+        run: |
+          echo "✅ Dispatched manifest-update event to scoop-bucket"
+          echo "   Tool: cm"
+          echo "   Version: ${{ needs.publish-installer.outputs.version }}"

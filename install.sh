@@ -296,3 +296,4 @@ if [ "$VERIFY" -eq 1 ]; then
 fi
 
 ok "Done. Run: cm --help"
+info "Tip: For automatic updates, install via Homebrew: brew install dicklesworthstone/tap/cm"

@@ -13,7 +13,7 @@ Transforms scattered agent sessions into persistent, cross-agent memory—so eve
 **One-liner install (Linux/macOS):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh \
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh?$(date +%s)" \
   | bash -s -- --easy-mode --verify
 ```
 
@@ -687,7 +687,7 @@ For each session until target reached:
 
 **Linux/macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh \
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh?$(date +%s)" \
   | bash -s -- --easy-mode --verify
 ```
 
