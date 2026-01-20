@@ -685,6 +685,26 @@ For each session until target reached:
 
 ### One-Liner (Recommended)
 
+#### Recommended: Homebrew (macOS/Linux)
+
+```bash
+brew install dicklesworthstone/tap/cm
+```
+
+This method provides:
+- Automatic updates via `brew upgrade`
+- Dependency management
+- Easy uninstall via `brew uninstall`
+
+#### Windows: Scoop
+
+```powershell
+scoop bucket add dicklesworthstone https://github.com/Dicklesworthstone/scoop-bucket
+scoop install dicklesworthstone/cm
+```
+
+#### Alternative: Install Script
+
 **Linux/macOS:**
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh?$(date +%s)" \
