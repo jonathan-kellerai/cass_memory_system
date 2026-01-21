@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
-import { TRAUMA_GUARD_SCRIPT } from "../src/trauma_guard_script.js";
+import { TRAUMA_GUARD_SCRIPT, GIT_PRECOMMIT_HOOK } from "../src/trauma_guard_script.js";
 import { TraumaEntry } from "../src/types.js";
 import { withTempDir } from "./helpers/index.js";
 
@@ -17,9 +17,9 @@ import { withTempDir } from "./helpers/index.js";
  * Get the Python script content with proper Unicode handling.
  * Bun's String.raw may escape Unicode, so we fix the common escapes.
  */
-function getPythonScript(): string {
+function getPythonScript(script: string = TRAUMA_GUARD_SCRIPT): string {
   // Fix Unicode escapes that Bun may introduce
-  return TRAUMA_GUARD_SCRIPT
+  return script
     .replace(/\\u\{1f525\}/g, "🔥")
     .replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, hex) =>
       String.fromCodePoint(parseInt(hex, 16))
@@ -34,6 +34,121 @@ describe("TRAUMA_GUARD_SCRIPT - Export Validation", () => {
     expect(typeof TRAUMA_GUARD_SCRIPT).toBe("string");
     expect(TRAUMA_GUARD_SCRIPT.length).toBeGreaterThan(100);
   });
+  // ... existing tests ...
+});
+
+// ... existing TRAUMA_GUARD_SCRIPT tests ...
+
+// =============================================================================
+// GIT_PRECOMMIT_HOOK Tests
+// =============================================================================
+describe("GIT_PRECOMMIT_HOOK", () => {
+  const createTrauma = (id: string, pattern: string): TraumaEntry => ({
+    id,
+    severity: "CRITICAL",
+    pattern,
+    scope: "global",
+    status: "active",
+    trigger_event: {
+      session_path: "/sessions/test.jsonl",
+      timestamp: new Date().toISOString()
+    },
+    created_at: new Date().toISOString()
+  });
+
+  async function setupAndRunHook(
+    dir: string,
+    diffContent: string,
+    traumas: TraumaEntry[] = []
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const scriptPath = join(dir, "pre-commit.py");
+    // Mock get_staged_diff to return our content
+    let script = getPythonScript(GIT_PRECOMMIT_HOOK);
+    
+    // Inject mock for get_staged_diff
+    const mockFunc = `
+def get_staged_diff():
+    return """${diffContent}"""
+`;
+    // Replace the real function with our mock
+    script = script.replace(/def get_staged_diff\(\):[\s\S]+?return result.stdout\n    except:\n        return ""/, mockFunc);
+    
+    await writeFile(scriptPath, script);
+
+    // Create trauma files if needed
+    if (traumas.length > 0) {
+      const cassMemoryDir = join(dir, ".cass-memory");
+      await mkdir(cassMemoryDir, { recursive: true });
+      const traumaContent = traumas.map(t => JSON.stringify(t)).join("\n") + "\n";
+      await writeFile(join(cassMemoryDir, "traumas.jsonl"), traumaContent);
+    }
+
+    const result = spawnSync("python3", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: { ...process.env, HOME: dir }
+    });
+
+    return {
+      exitCode: result.status ?? 1,
+      stdout: result.stdout?.trim() ?? "",
+      stderr: result.stderr?.trim() ?? ""
+    };
+  }
+
+  it("blocks added dangerous lines", async () => {
+    await withTempDir("git-block-add", async (dir) => {
+      const traumas = [createTrauma("t1", "^rm\\s+-rf")];
+      const diff = `diff --git a/test.sh b/test.sh
+index ...
+--- a/test.sh
++++ b/test.sh
+@@ -0,0 +1 @@
++rm -rf /`;
+
+      const result = await setupAndRunHook(dir, diff, traumas);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain("BLOCKED");
+      expect(result.stdout).toContain("rm -rf");
+    });
+  });
+
+  it("ignores deleted dangerous lines", async () => {
+    await withTempDir("git-allow-delete", async (dir) => {
+      const traumas = [createTrauma("t1", "^rm\\s+-rf")];
+      const diff = `diff --git a/test.sh b/test.sh
+index ...
+--- a/test.sh
++++ b/test.sh
+@@ -1 +0,0 @@
+-rm -rf /`;
+
+      const result = await setupAndRunHook(dir, diff, traumas);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("");
+    });
+  });
+
+  it("ignores dangerous lines in context (not starting with +)", async () => {
+    await withTempDir("git-allow-context", async (dir) => {
+      const traumas = [createTrauma("t1", "^rm\\s+-rf")];
+      // Note: ' ' prefix is context
+      const diff = `diff --git a/test.sh b/test.sh
+index ...
+--- a/test.sh
++++ b/test.sh
+@@ -1,3 +1,3 @@
+ echo start
+ rm -rf /
+-echo end
++echo done`;
+
+      const result = await setupAndRunHook(dir, diff, traumas);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("");
+    });
+  });
+});
 
   it("starts with Python shebang", () => {
     expect(TRAUMA_GUARD_SCRIPT.startsWith("#!/usr/bin/env python3")).toBe(true);
