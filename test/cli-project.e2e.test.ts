@@ -475,6 +475,48 @@ describe("E2E: CLI project command", () => {
     });
   });
 
+  it.serial("warns when --top is combined with --per-category", async () => {
+    const log = createE2ELogger("cli-project: top + per-category warning");
+    log.setRepro("bun test test/cli-project.e2e.test.ts");
+
+    await log.run(async () => {
+      await withTempCassHome(async (env) => {
+        await writeTestConfig(env);
+
+        const bullet = createBullet({
+          id: "b-proj-top-percat",
+          category: "testing",
+          content: "Test bullet.",
+          maturity: "established",
+          feedbackEvents: [],
+        });
+        const playbook = createTestPlaybook([bullet]);
+        await writeFile(env.playbookPath, yaml.stringify(playbook));
+
+        const capture = captureConsole();
+        try {
+          await withNoColor(async () => {
+            await withCwd(env.home, async () => {
+              log.step("Run command with --top and --per-category", { top: 5, perCategory: 1 });
+              await projectCommand({ top: 5, perCategory: 1, json: true });
+            });
+          });
+        } finally {
+          capture.restore();
+        }
+
+        const stdout = capture.logs.join("\n");
+        const stderr = capture.errors.join("\n");
+        log.snapshot("stdout", stdout);
+        log.snapshot("stderr", stderr);
+
+        const payload = JSON.parse(stdout);
+        expect(payload.success).toBe(true);
+        expect(stderr).toContain("Ignoring deprecated --top");
+      });
+    });
+  });
+
   it.serial("exports to file with --output and --force", async () => {
     const log = createE2ELogger("cli-project: output file");
     log.setRepro("bun test test/cli-project.e2e.test.ts");
