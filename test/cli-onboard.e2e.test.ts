@@ -179,4 +179,106 @@ describe("E2E: CLI onboard command", () => {
       }, "onboard-reset-confirmation");
     });
   });
+
+  it("reads a session in text mode (non-JSON)", async () => {
+    const log = createE2ELogger("onboard: read text");
+    log.setRepro("bun test test/cli-onboard.e2e.test.ts");
+
+    await log.run(async () => {
+      await withTempCassHome(async (env) => {
+        const sessionPath = path.join(env.home, "session-text.jsonl");
+        const sessionLines = [
+          JSON.stringify({ role: "user", content: "Help me debug this issue" }),
+          JSON.stringify({ role: "assistant", content: "Let me check the logs" }),
+        ].join("\n");
+        await writeFile(sessionPath, sessionLines, "utf-8");
+
+        const capture = captureConsole();
+        try {
+          await onboardCommand({ read: sessionPath });
+        } finally {
+          capture.restore();
+        }
+
+        const output = capture.logs.join("\n");
+        log.snapshot("text-output", output);
+
+        // Text mode should show session header and content
+        expect(output).toContain("SESSION:");
+        expect(output).toContain("analyze this session");
+        expect(output).toContain("playbook add");
+      }, "onboard-read-text");
+    });
+  });
+
+  it("reads a session with template mode (JSON)", async () => {
+    const log = createE2ELogger("onboard: read template json");
+    log.setRepro("bun test test/cli-onboard.e2e.test.ts");
+
+    await log.run(async () => {
+      await withTempCassHome(async (env) => {
+        const sessionPath = path.join(env.home, "session-template.jsonl");
+        const sessionLines = [
+          JSON.stringify({ role: "user", content: "I need to fix a bug in the database query" }),
+          JSON.stringify({ role: "assistant", content: "Let me look at the SQL" }),
+          JSON.stringify({ role: "user", content: "The query is timing out" }),
+          JSON.stringify({ role: "assistant", content: "Adding an index should help" }),
+        ].join("\n");
+        await writeFile(sessionPath, sessionLines, "utf-8");
+
+        const capture = captureConsole();
+        try {
+          await onboardCommand({ read: sessionPath, template: true, json: true });
+        } finally {
+          capture.restore();
+        }
+
+        const output = capture.logs.join("\n");
+        const payload = JSON.parse(output);
+        log.snapshot("template-json-output", payload);
+
+        expect(payload.success).toBe(true);
+        expect(payload.command).toBe("onboard:read-template");
+        expect(payload.data.metadata).toBeDefined();
+        expect(payload.data.metadata.path).toBe(sessionPath);
+        expect(payload.data.context).toBeDefined();
+        expect(payload.data.context.suggestedFocus).toBeDefined();
+        expect(payload.data.sessionContent).toBeDefined();
+      }, "onboard-read-template-json");
+    });
+  });
+
+  it("reads a session with template mode (text)", async () => {
+    const log = createE2ELogger("onboard: read template text");
+    log.setRepro("bun test test/cli-onboard.e2e.test.ts");
+
+    await log.run(async () => {
+      await withTempCassHome(async (env) => {
+        const sessionPath = path.join(env.home, "session-template-text.jsonl");
+        const sessionLines = [
+          JSON.stringify({ role: "user", content: "Debug this test failure" }),
+          JSON.stringify({ role: "assistant", content: "Running tests now" }),
+        ].join("\n");
+        await writeFile(sessionPath, sessionLines, "utf-8");
+
+        const capture = captureConsole();
+        try {
+          await onboardCommand({ read: sessionPath, template: true });
+        } finally {
+          capture.restore();
+        }
+
+        const output = capture.logs.join("\n");
+        log.snapshot("template-text-output", output);
+
+        // Template text mode should show structured sections
+        expect(output).toContain("SESSION ANALYSIS TEMPLATE");
+        expect(output).toContain("METADATA");
+        expect(output).toContain("CONTEXT");
+        expect(output).toContain("SUGGESTED FOCUS");
+        expect(output).toContain("SESSION CONTENT");
+        expect(output).toContain("EXTRACTION INSTRUCTIONS");
+      }, "onboard-read-template-text");
+    });
+  });
 });
