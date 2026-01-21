@@ -475,6 +475,191 @@ describe("audit command - Unit Tests", () => {
     );
   });
 
+  test("trauma scan mode with found candidates displays human-readable output", async () => {
+    await withTempCassHome(async (env) => {
+      await withCwd(env.home, async () => {
+        // Stub cass to return trauma search results
+        const cassRunner: CassRunner = {
+          execFile: async (_file, args) => {
+            const cmd = args[0] ?? "";
+            if (cmd === "timeline") return { stdout: JSON.stringify({ groups: [] }), stderr: "" };
+            if (cmd === "export") return { stdout: "", stderr: "" };
+            if (cmd === "search") {
+              // Return search results that match trauma patterns
+              return {
+                stdout: JSON.stringify([
+                  {
+                    file_path: "/sessions/trauma-session.jsonl",
+                    matches: [{ line_number: 10, content: "I apologize for deleting your database" }],
+                  },
+                ]),
+                stderr: "",
+              };
+            }
+            throw new Error(`Unexpected cass execFile command: ${cmd}`);
+          },
+          spawnSync: () => ({ status: 0, stdout: "", stderr: "" }),
+          spawn: (() => { throw new Error("spawn not implemented"); }) as any,
+        };
+
+        writeFileSync(env.configPath, JSON.stringify({ cassPath: "cass" }, null, 2));
+        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+        const { output } = await captureConsoleLog(() =>
+          auditCommand({ days: 7, json: false, trauma: true }, { cassRunner })
+        );
+
+        expect(output).toContain("Project Hot Stove");
+        // Should show found candidates
+        expect(output).toContain("candidate");
+        expect(output).toContain("trauma");
+      });
+    });
+  });
+
+  test("audit command handles unexpected errors gracefully (JSON mode)", async () => {
+    await withEnvAsync(
+      {
+        ANTHROPIC_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+        GOOGLE_GENERATIVE_AI_API_KEY: undefined,
+      },
+      async () => {
+        await withTempCassHome(async (env) => {
+          await withCwd(env.home, async () => {
+            // Create a cass runner that throws an error
+            const cassRunner: CassRunner = {
+              execFile: async () => {
+                throw new Error("Simulated cass failure");
+              },
+              spawnSync: () => ({ status: 0, stdout: "", stderr: "" }),
+              spawn: (() => { throw new Error("spawn not implemented"); }) as any,
+            };
+
+            writeFileSync(
+              env.configPath,
+              JSON.stringify({ cassPath: "cass", apiKey: "sk-ant-test-0000000000000000" }, null, 2)
+            );
+            writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+            process.exitCode = 0;
+            const { output } = await captureConsoleLog(() =>
+              auditCommand({ days: 7, json: true }, { cassRunner })
+            );
+
+            const payload = JSON.parse(output) as any;
+            expect(payload.success).toBe(false);
+            expect(payload.error.code).toBe("AUDIT_FAILED");
+            expect(payload.error.message).toContain("Simulated cass failure");
+          });
+        });
+      }
+    );
+  });
+
+  test("audit command handles unexpected errors gracefully (human-readable mode)", async () => {
+    await withEnvAsync(
+      {
+        ANTHROPIC_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+        GOOGLE_GENERATIVE_AI_API_KEY: undefined,
+      },
+      async () => {
+        await withTempCassHome(async (env) => {
+          await withCwd(env.home, async () => {
+            // Create a cass runner that throws an error
+            const cassRunner: CassRunner = {
+              execFile: async () => {
+                throw new Error("Simulated cass failure for human mode");
+              },
+              spawnSync: () => ({ status: 0, stdout: "", stderr: "" }),
+              spawn: (() => { throw new Error("spawn not implemented"); }) as any,
+            };
+
+            writeFileSync(
+              env.configPath,
+              JSON.stringify({ cassPath: "cass", apiKey: "sk-ant-test-0000000000000000" }, null, 2)
+            );
+            writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
+
+            // Capture both stdout and stderr for human-readable mode
+            const originalError = console.error;
+            const errors: string[] = [];
+            console.error = (...args: unknown[]) => {
+              errors.push(args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "));
+            };
+
+            const { output } = await captureConsoleLog(() =>
+              auditCommand({ days: 7, json: false }, { cassRunner })
+            );
+            console.error = originalError;
+
+            const allOutput = output + errors.join("\n");
+            expect(allOutput).toContain("Simulated cass failure");
+          });
+        });
+      }
+    );
+  });
+
+  test("displays medium and low severity violations correctly", async () => {
+    await withEnvAsync(
+      {
+        ANTHROPIC_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+        GOOGLE_GENERATIVE_AI_API_KEY: undefined,
+      },
+      async () => {
+        await withTempCassHome(async (env) => {
+          await withCwd(env.home, async () => {
+            const sessionPath = "/sessions/audit-severity.jsonl";
+            const timelineJson = JSON.stringify({
+              groups: [{ date: "2025-01-01", sessions: [{ path: sessionPath, agent: "stub", messageCount: 1, startTime: "10:00", endTime: "10:01" }] }],
+            });
+
+            const cassRunner = createCassRunnerStub({ timeline: timelineJson, exportText: "test content" });
+
+            writeFileSync(
+              env.configPath,
+              JSON.stringify({ cassPath: "cass", apiKey: "sk-ant-test-0000000000000000" }, null, 2)
+            );
+
+            // Create bullets with different maturities to test all severity levels
+            const playbook = createTestPlaybook([
+              createTestBullet({ id: "b-proven", content: "Proven rule", maturity: "proven" }),
+              createTestBullet({ id: "b-candidate", content: "Candidate rule", maturity: "candidate" }),
+              createTestBullet({ id: "b-experimental", content: "Experimental rule", maturity: "experimental" }),
+            ]);
+            writeFileSync(env.playbookPath, yaml.stringify(playbook));
+
+            const io: LLMIO = {
+              generateObject: async <T>() => ({
+                object: {
+                  results: [
+                    { ruleId: "b-proven", status: "violated", evidence: "High severity violation" },
+                    { ruleId: "b-candidate", status: "violated", evidence: "Medium severity violation" },
+                    { ruleId: "b-experimental", status: "violated", evidence: "Low severity violation" },
+                  ],
+                } as any as T,
+              }),
+            };
+
+            const { output } = await captureConsoleLog(() =>
+              auditCommand({ days: 7, json: false }, { io, cassRunner })
+            );
+
+            expect(output).toContain("HIGH");
+            expect(output).toContain("MEDIUM");
+            expect(output).toContain("LOW");
+            expect(output).toContain("b-proven");
+            expect(output).toContain("b-candidate");
+            expect(output).toContain("b-experimental");
+          });
+        });
+      }
+    );
+  });
+
   test("scanSessionsForViolations maps severity and skips retired bullets", async () => {
     const playbook = createTestPlaybook([
       createTestBullet({
