@@ -13,8 +13,9 @@ import yaml from "yaml";
 import type { LLMIO } from "../src/llm.js";
 import type { CassRunner } from "../src/cass.js";
 import { auditCommand } from "../src/commands/audit.js";
+import { scanSessionsForViolations } from "../src/audit.js";
 import { withTempCassHome } from "./helpers/temp.js";
-import { createTestBullet, createTestPlaybook } from "./helpers/factories.js";
+import { createTestBullet, createTestPlaybook, createTestConfig } from "./helpers/factories.js";
 
 function createCassRunnerStub(opts: { timeline: string; exportText: string }): CassRunner {
   return {
@@ -472,5 +473,68 @@ describe("audit command - Unit Tests", () => {
         });
       }
     );
+  });
+
+  test("scanSessionsForViolations maps severity and skips retired bullets", async () => {
+    const playbook = createTestPlaybook([
+      createTestBullet({
+        id: "b-proven",
+        content: "Always validate inputs",
+        state: "active",
+        maturity: "proven",
+      }),
+      createTestBullet({
+        id: "b-candidate",
+        content: "Use structured logs",
+        state: "active",
+        maturity: "candidate",
+      }),
+      createTestBullet({
+        id: "b-retired",
+        content: "Deprecated rule",
+        state: "retired",
+        maturity: "deprecated",
+        deprecated: true,
+      }),
+    ]);
+
+    const cassRunner: CassRunner = {
+      execFile: async (_file, args) => {
+        const cmd = args[0] ?? "";
+        if (cmd === "export") return { stdout: "session content", stderr: "" };
+        throw new Error(`Unexpected cass execFile command: ${cmd}`);
+      },
+      spawnSync: () => ({ status: 0, stdout: "", stderr: "" }),
+      spawn: (() => {
+        throw new Error("spawn not implemented in cass runner stub");
+      }) as any,
+    };
+
+    const io: LLMIO = {
+      generateObject: async <T>() => ({
+        object: {
+          results: [
+            { ruleId: "b-proven", status: "violated", evidence: "Found issue" },
+            { ruleId: "b-candidate", status: "violated", evidence: "Found issue" },
+            { ruleId: "b-retired", status: "violated", evidence: "Found issue" },
+          ],
+        } as any as T,
+      }),
+    };
+
+    const config = createTestConfig({ apiKey: "sk-ant-test-0000000000000000" });
+    const violations = await scanSessionsForViolations(
+      ["/sessions/audit-s1.jsonl"],
+      playbook,
+      config,
+      io,
+      cassRunner
+    );
+
+    expect(violations).toHaveLength(2);
+    const byId = Object.fromEntries(violations.map((v) => [v.bulletId, v]));
+    expect(byId["b-proven"]?.severity).toBe("high");
+    expect(byId["b-candidate"]?.severity).toBe("medium");
+    expect(byId["b-retired"]).toBeUndefined();
   });
 });

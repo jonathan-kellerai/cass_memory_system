@@ -38,3 +38,18 @@ Scope: identify missing or weak unit coverage across src/** using real implement
 - Inventory doc (this file) committed.
 - At least one P0 module gets new passing test file with >90% line coverage.
 - Clear mapping from modules to planned test files (above) for follow-on beads.
+
+## 2026-01-21 Coverage audit (bd-19eu)
+- Heuristic import scan found no direct test imports for `src/audit.ts` (coverage is likely only via `auditCommand` tests).
+- Only referenced by E2E tests (no unit/integration/property/fast coverage):
+  - `src/commands/guard`
+  - `src/commands/init`
+  - `src/commands/mark`
+  - `src/commands/similar`
+  - `src/commands/starters`
+  - `src/commands/stats`
+  - `src/commands/trauma`
+  - `src/commands/usage`
+- Suggested follow-ups:
+  - ✅ Added direct unit test for `scanSessionsForViolations` in `src/audit.ts` (severity mapping + retired bullet filtering) in `test/audit.test.ts`.
+  - Add lightweight unit tests for the command modules above (input validation + JSON error shape).
