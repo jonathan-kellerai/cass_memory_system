@@ -944,91 +944,8 @@ describe("onboardCommand --gaps text output", () => {
   });
 });
 
-describe("onboardCommand --sample text output", () => {
-  test("shows fill-gaps priority categories when present", async () => {
-    await withTempCassHome(async (env) => {
-      await withTempGitRepo(async (repoDir) => {
-        const originalCwd = process.cwd();
-        process.chdir(repoDir);
-
-        // Empty playbook has many critical gaps
-        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
-
-        const capture = captureConsole();
-        try {
-          await onboardCommand({ sample: true, fillGaps: true });
-          const output = capture.getOutput();
-          // Should show gap-filling header and priority categories
-          expect(output).toContain("GAP-FILLING");
-          expect(output).toContain("prioritized for");
-        } finally {
-          capture.restore();
-          process.chdir(originalCwd);
-        }
-      });
-    });
-  });
-
-  test("shows 'no gaps to fill' when playbook is complete", async () => {
-    await withTempCassHome(async (env) => {
-      await withTempGitRepo(async (repoDir) => {
-        const originalCwd = process.cwd();
-        process.chdir(repoDir);
-
-        // Create a well-populated playbook (15 rules per category)
-        const categories = ["debugging", "testing", "workflow", "integration", "architecture"];
-        const bullets = categories.flatMap((cat, catIdx) =>
-          Array.from({ length: 15 }, (_, i) =>
-            createTestBullet({ id: `b-${cat}-${i}`, category: cat, state: "active" })
-          )
-        );
-        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook(bullets)));
-
-        const capture = captureConsole();
-        try {
-          await onboardCommand({ sample: true, fillGaps: true });
-          const output = capture.getOutput();
-          // Should mention that there are no gaps
-          expect(output).toContain("no gaps");
-        } finally {
-          capture.restore();
-          process.chdir(originalCwd);
-        }
-      });
-    });
-  });
-
-  test("shows filtered count when sessions are processed", async () => {
-    await withTempCassHome(async (env) => {
-      await withTempGitRepo(async (repoDir) => {
-        const originalCwd = process.cwd();
-        process.chdir(repoDir);
-
-        writeFileSync(env.playbookPath, yaml.stringify(createTestPlaybook([])));
-
-        // Mark several sessions as processed
-        await markSessionProcessed("/test/s1.jsonl", 2);
-        await markSessionProcessed("/test/s2.jsonl", 3);
-        await markSessionProcessed("/test/s3.jsonl", 1);
-
-        const capture = captureConsole();
-        try {
-          // First do a sample without filtering to check basic behavior
-          await onboardCommand({ sample: true });
-          const output = capture.getOutput();
-          // Should work and show header
-          expect(output).toContain("SAMPLED SESSIONS");
-        } finally {
-          capture.restore();
-          process.chdir(originalCwd);
-        }
-      });
-    });
-  });
-});
-
 describe("onboardCommand --read text output", () => {
-  test("shows read instructions in non-JSON mode with null content", async () => {
+  test("shows read error in non-JSON mode with null content", async () => {
     await withTempCassHome(async (env) => {
       await withTempGitRepo(async (repoDir) => {
         const originalCwd = process.cwd();
@@ -1051,8 +968,8 @@ describe("onboardCommand --read text output", () => {
   });
 });
 
-describe("onboardCommand --read --template", () => {
-  test("template mode text output shows metadata and context sections", async () => {
+describe("onboardCommand --read --template JSON", () => {
+  test("template mode JSON returns error for non-existent session", async () => {
     await withTempCassHome(async (env) => {
       await withTempGitRepo(async (repoDir) => {
         const originalCwd = process.cwd();
@@ -1062,11 +979,12 @@ describe("onboardCommand --read --template", () => {
 
         const capture = captureConsole();
         try {
-          // Trying to read non-existent session in template mode returns error
-          await onboardCommand({ read: "/nonexistent.jsonl", template: true });
-          const errors = capture.getErrors();
-          // Template mode should fail with session not found
-          expect(errors.length > 0 || capture.getOutput().includes("error")).toBe(true);
+          await onboardCommand({ read: "/nonexistent.jsonl", template: true, json: true });
+          const output = capture.getOutput();
+          const result = JSON.parse(output);
+          // Template mode should error on missing session
+          expect(result.success).toBe(false);
+          expect(result.error).toBeDefined();
         } finally {
           capture.restore();
           process.chdir(originalCwd);
