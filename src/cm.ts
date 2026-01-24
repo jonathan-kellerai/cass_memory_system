@@ -100,6 +100,7 @@ program.command("context")
   .option("--history <n>", "Number of history snippets", toInt)
   .option("--days <n>", "Lookback days for history", toInt)
   .option("--format <markdown|json|toon>", "Force output format (overrides --json). TOON provides token-efficient output.")
+  .option("--stats", "Show token statistics on stderr (JSON vs TOON)")
   .option("--log-context", "Log context usage for implicit feedback")
   .option("--session <id>", "Optional session id to log with context")
   .addHelpText("after", () =>
@@ -108,6 +109,7 @@ program.command("context")
       "context \"fix the login bug\" --limit 10 --days 30 --json",
       "context \"refactor utils\" --workspace . --json",
       "context \"write tests\" --format markdown",
+      "context \"summarize prior decisions\" --format toon --stats",
     ])
   )
   .action(async (task: string, opts: any) => await contextCommand(task, opts));
@@ -120,11 +122,14 @@ program.command("similar")
   .option("--threshold <t>", "Minimum similarity score 0-1 (default: 0.7)", toFloat)
   .option("--scope <scope>", "Filter by scope: global, workspace, all", "all")
   .option("-j, --json", "Output JSON")
+  .option("--format <json|toon>", "Output format: json or toon (overrides --json)")
+  .option("--stats", "Show token statistics on stderr (JSON vs TOON)")
   .addHelpText("after", () =>
     formatCommandExamples([
       "similar \"jwt authentication errors\" --json",
       "similar \"rate limit handling\" --limit 10 --threshold 0.8 --json",
       "similar \"repo build pipeline\" --scope workspace --json",
+      "similar \"rate limit handling\" --format toon --stats",
     ])
   )
   .action(async (query: string, opts: any) => await similarCommand(query, opts));
@@ -165,11 +170,14 @@ playbook.command("list")
   .description("List active rules")
   .option("--category <cat>", "Filter by category")
   .option("-j, --json", "Output JSON")
+  .option("--format <json|toon>", "Output format: json or toon (overrides --json)")
+  .option("--stats", "Show token statistics on stderr (JSON vs TOON)")
   .addHelpText("after", () =>
     formatCommandExamples([
       "playbook list",
       "playbook list --category security",
       "playbook list --json",
+      "playbook list --format toon --stats",
     ])
   )
   .action(async (opts: any) => await playbookCommand("list", [], opts));
@@ -325,11 +333,14 @@ program.command("rm")
 program.command("stats")
   .description("Show playbook health metrics")
   .option("-j, --json", "Output JSON")
+  .option("--format <json|toon>", "Output format: json or toon (overrides --json)")
+  .option("--stats", "Show token statistics on stderr (JSON vs TOON)")
   .addHelpText("after", () =>
     formatCommandExamples([
       "stats",
       "stats --json",
       "stats --json > stats.json",
+      "stats --format toon --stats",
     ])
   )
   .action(async (opts: any) => await statsCommand(opts));

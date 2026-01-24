@@ -2079,9 +2079,16 @@ export function printJson(value: unknown): void {
  */
 export function isToonOutput(options?: { json?: boolean; format?: string }): boolean {
   const format = typeof options?.format === "string" ? options.format.trim().toLowerCase() : "";
-  if (format === "toon") return true;
 
-  // Check environment variables
+  // Explicit --format flag takes highest precedence
+  if (format === "toon") return true;
+  // Any other explicit format (json, markdown, etc.) means not TOON.
+  if (format) return false;
+
+  // Explicit --json flag takes precedence over environment variables
+  if (options?.json) return false;
+
+  // Check environment variables (lowest precedence)
   const cmFormat = process.env.CM_OUTPUT_FORMAT?.toLowerCase();
   if (cmFormat === "toon") return true;
 
@@ -2091,31 +2098,53 @@ export function isToonOutput(options?: { json?: boolean; format?: string }): boo
   return false;
 }
 
+function isToonRustBinary(pathOrCmd: string): boolean {
+  const { spawnSync } = require("child_process");
+  const base = pathOrCmd.split(/[\\/]/).pop()?.toLowerCase() ?? pathOrCmd.toLowerCase();
+  if (base === "toon" || base === "toon.exe") return false;
+
+  try {
+    const help = spawnSync(pathOrCmd, ["--help"], { encoding: "utf8" });
+    if (help.error) return false;
+    const helpOut = `${help.stdout ?? ""}${help.stderr ?? ""}`.toLowerCase();
+    if (helpOut.includes("reference implementation in rust")) return true;
+
+    const ver = spawnSync(pathOrCmd, ["--version"], { encoding: "utf8" });
+    if (ver.error) return false;
+    const verOut = `${ver.stdout ?? ""}${ver.stderr ?? ""}`.trim().toLowerCase();
+    return /^(tru|toon_rust)\s+[0-9]/.test(verOut);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Find the tru binary for TOON encoding.
  * Checks TOON_TRU_BIN, TOON_BIN env vars, then PATH.
  *
- * @returns Path to tru binary, or null if not found
+ * @returns Path/command for tru binary, or null if not found
  */
 function findTruBinary(): string | null {
-  const { execSync } = require("child_process");
   const fs = require("fs");
 
-  // Check environment variables first
-  const envBin = process.env.TOON_TRU_BIN || process.env.TOON_BIN;
-  if (envBin && fs.existsSync(envBin)) {
-    return envBin;
+  const envCandidates = [
+    { name: "TOON_TRU_BIN", value: process.env.TOON_TRU_BIN },
+    { name: "TOON_BIN", value: process.env.TOON_BIN },
+  ];
+
+  // Check environment variables first (path or command)
+  for (const { name, value } of envCandidates) {
+    const candidate = value?.trim();
+    if (!candidate) continue;
+    if (isToonRustBinary(candidate)) {
+      return candidate;
+    }
+    console.error(`[cm] Warning: ${name}=${JSON.stringify(candidate)} does not look like toon_rust (expected tru); ignoring`);
   }
 
   // Check PATH
-  try {
-    const result = execSync("which tru", { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
-    const path = result.trim();
-    if (path && fs.existsSync(path)) {
-      return path;
-    }
-  } catch {
-    // Not in PATH
+  if (isToonRustBinary("tru")) {
+    return "tru";
   }
 
   // Check common locations
@@ -2126,7 +2155,7 @@ function findTruBinary(): string | null {
     "/data/tmp/cargo-target/debug/tru",
   ];
   for (const p of commonPaths) {
-    if (fs.existsSync(p)) {
+    if (fs.existsSync(p) && isToonRustBinary(p)) {
       return p;
     }
   }
@@ -2143,13 +2172,28 @@ export function isToonAvailable(): boolean {
   return findTruBinary() !== null;
 }
 
+function estimateTokensApprox(text: string): number {
+  const chars = text.length;
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return Math.max(Math.floor(chars / 4), words);
+}
+
+function shouldPrintToonStats(options?: { stats?: boolean }): boolean {
+  if (options?.stats) return true;
+  const raw = process.env.TOON_STATS?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 /**
  * Print value as TOON format, with graceful fallback to JSON if tru is unavailable.
  *
  * @param value - Value to encode and print
  * @param options - Optional settings
  */
-export function printToon(value: unknown, options?: { fallbackToJson?: boolean }): void {
+export function printToon(
+  value: unknown,
+  options?: { fallbackToJson?: boolean; stats?: boolean }
+): void {
   const truBin = findTruBinary();
 
   if (!truBin) {
@@ -2163,24 +2207,37 @@ export function printToon(value: unknown, options?: { fallbackToJson?: boolean }
   }
 
   const { spawnSync } = require("child_process");
-  const jsonStr = JSON.stringify(value);
+  const jsonForEncode = JSON.stringify(value);
+  const showStats = shouldPrintToonStats(options);
+  const jsonPrintable = showStats ? JSON.stringify(value, null, 2) : "";
 
   const result = spawnSync(truBin, ["--encode"], {
-    input: jsonStr,
+    input: jsonForEncode,
     encoding: "utf8",
     maxBuffer: 50 * 1024 * 1024, // 50MB buffer
   });
 
-  if (result.status !== 0) {
+  // Check for spawn errors or non-zero exit status
+  if (result.error || result.status !== 0) {
+    const errorMsg = result.error?.message || result.stderr?.trim() || "unknown error";
     if (options?.fallbackToJson !== false) {
-      console.error(`[cm] Warning: tru encode failed (${result.stderr?.trim() || "unknown error"}), falling back to JSON`);
+      console.error(`[cm] Warning: tru encode failed (${errorMsg}), falling back to JSON`);
       printJson(value);
       return;
     }
-    throw new Error(`TOON encoding failed: ${result.stderr?.trim() || "unknown error"}`);
+    throw new Error(`TOON encoding failed: ${errorMsg}`);
   }
 
-  console.log(result.stdout);
+  const toonOut = String(result.stdout ?? "");
+  if (showStats) {
+    const jsonTokens = estimateTokensApprox(jsonPrintable);
+    const toonTokens = estimateTokensApprox(toonOut);
+    const savings = jsonTokens > 0 ? Math.round(100 - (toonTokens * 100) / jsonTokens) : 0;
+    console.error(
+      `[stats] JSON: ${jsonTokens} tokens, TOON: ${toonTokens} tokens (${savings}% savings)`
+    );
+  }
+  process.stdout.write(toonOut);
 }
 
 /**
@@ -2190,9 +2247,12 @@ export function printToon(value: unknown, options?: { fallbackToJson?: boolean }
  * @param value - Value to output
  * @param options - Command options with format configuration
  */
-export function printStructuredOutput(value: unknown, options?: { json?: boolean; format?: string }): void {
+export function printStructuredOutput(
+  value: unknown,
+  options?: { json?: boolean; format?: string; stats?: boolean }
+): void {
   if (isToonOutput(options)) {
-    printToon(value);
+    printToon(value, { stats: options?.stats });
   } else {
     printJson(value);
   }
@@ -2630,8 +2690,10 @@ export function reportError(
   options: PrintJsonErrorOptions & { json?: boolean; format?: string } = {}
 ): number {
   const payload = buildJsonErrorPayload(err, options);
-  if (isJsonOutput(options)) {
-    printJson(payload);
+  if (isJsonOutput(options) || isToonOutput(options)) {
+    // Preserve requested structured output mode (JSON or TOON). Errors are rare; if TOON is
+    // requested but `tru` is unavailable, we gracefully fall back to JSON.
+    printStructuredOutput(payload, options);
   } else {
     printHumanErrorPayload(payload);
   }
@@ -2673,6 +2735,14 @@ export function printJsonResult<T>(
   data: T,
   options: JsonResultOptions = {}
 ): void {
+  printJson(buildJsonSuccessPayload(command, data, options));
+}
+
+export function buildJsonSuccessPayload<T>(
+  command: string,
+  data: T,
+  options: JsonResultOptions = {}
+): JsonSuccessPayload<T> {
   const { effect = true, reason, warnings } = options;
   const timestamp = options.timestamp ?? new Date().toISOString();
   const metadata: JsonEnvelopeMetadata = {
@@ -2683,7 +2753,7 @@ export function printJsonResult<T>(
     version: getVersion(),
   };
 
-  const payload: JsonSuccessPayload<T> = {
+  return {
     success: true,
     command,
     timestamp,
@@ -2692,8 +2762,16 @@ export function printJsonResult<T>(
     ...(Array.isArray(warnings) && warnings.length > 0 ? { warnings } : {}),
     ...(effect === false ? { effect: false as const, reason } : {}),
   };
+}
 
-  printJson(payload);
+export function printStructuredResult<T>(
+  command: string,
+  data: T,
+  outputOptions?: { json?: boolean; format?: string; stats?: boolean },
+  options: JsonResultOptions = {}
+): void {
+  const payload = buildJsonSuccessPayload(command, data, options);
+  printStructuredOutput(payload, outputOptions);
 }
 
 // --- String Normalization ---

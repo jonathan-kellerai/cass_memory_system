@@ -14,8 +14,7 @@ import {
   isJsonOutput,
   isToonOutput,
   reportError,
-  printJsonResult,
-  printStructuredOutput,
+  printStructuredResult,
   truncateWithIndicator,
   formatLastHelpful,
   extractBulletReasoning,
@@ -130,6 +129,7 @@ export interface ContextFlags {
   days?: number;
   workspace?: string;
   format?: "json" | "markdown" | "toon";
+  stats?: boolean;
   logContext?: boolean;
   session?: string;
 }
@@ -738,17 +738,8 @@ export async function contextCommand(
       result.traumaWarning = traumaWarning;
     }
 
-  if (wantsJson || isToonOutput(normalizedFlags)) {
-    const payload = {
-      success: true,
-      command,
-      timestamp: new Date().toISOString(),
-      data: result,
-      metadata: {
-        executionMs: Math.max(0, Date.now() - startedAtMs),
-      },
-    };
-    printStructuredOutput(payload, normalizedFlags);
+  if (wantsJson || wantsToon) {
+    printStructuredResult(command, result, normalizedFlags, { startedAtMs });
     return;
   }
 

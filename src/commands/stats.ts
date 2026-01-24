@@ -6,12 +6,33 @@ import {
   isStale
 } from "../scoring.js";
 import { findSemanticDuplicates } from "../semantic.js";
-import { tokenize, printJsonResult } from "../utils.js";
+import { isToonOutput, tokenize, printStructuredResult, reportError, validateOneOf } from "../utils.js";
 import chalk from "chalk";
 import { iconPrefix } from "../output.js";
+import { ErrorCode } from "../types.js";
 
-export async function statsCommand(options: { json?: boolean }): Promise<void> {
+export async function statsCommand(options: { json?: boolean; format?: "json" | "toon"; stats?: boolean }): Promise<void> {
   const startedAtMs = Date.now();
+  const formatCheck = validateOneOf(options.format, "format", ["json", "toon"] as const, {
+    allowUndefined: true,
+    caseInsensitive: true,
+  });
+  if (!formatCheck.ok) {
+    reportError(formatCheck.message, {
+      code: ErrorCode.INVALID_INPUT,
+      details: formatCheck.details,
+      hint: "Valid formats: json, toon",
+      json: options.json,
+      format: options.format,
+      command: "stats",
+      startedAtMs,
+    });
+    return;
+  }
+  const normalizedOptions = {
+    ...options,
+    ...(formatCheck.value !== undefined ? { format: formatCheck.value } : {}),
+  };
   const config = await loadConfig();
   const playbook = await loadMergedPlaybook(config);
   const bullets = playbook.bullets;
@@ -86,8 +107,8 @@ export async function statsCommand(options: { json?: boolean }): Promise<void> {
     semanticMergeCandidates
   };
 
-  if (options.json) {
-    printJsonResult("stats", stats, { startedAtMs });
+  if (normalizedOptions.json || isToonOutput(normalizedOptions)) {
+    printStructuredResult("stats", stats, normalizedOptions, { startedAtMs });
     return;
   }
 

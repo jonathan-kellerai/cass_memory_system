@@ -3,7 +3,7 @@ import { loadConfig } from "../config.js";
 import { loadMergedPlaybook, getActiveBullets } from "../playbook.js";
 import { findSimilarBulletsSemantic, getSemanticStatus, formatSemanticModeMessage } from "../semantic.js";
 import { getEffectiveScore } from "../scoring.js";
-import { jaccardSimilarity, truncate, getCliName, printJsonResult, reportError, warn } from "../utils.js";
+import { isToonOutput, jaccardSimilarity, truncate, getCliName, printStructuredResult, reportError, validateOneOf, warn } from "../utils.js";
 import { ErrorCode, PlaybookBullet } from "../types.js";
 import { formatRule, formatTipPrefix, getOutputStyle, wrapText } from "../output.js";
 
@@ -14,6 +14,8 @@ export interface SimilarFlags {
   threshold?: number;
   scope?: SimilarScope;
   json?: boolean;
+  format?: "json" | "toon";
+  stats?: boolean;
 }
 
 export interface SimilarResultItem {
@@ -139,10 +141,32 @@ export async function similarCommand(query: string, flags: SimilarFlags): Promis
   const startedAtMs = Date.now();
   const command = "similar";
   try {
-    const result = await generateSimilarResults(query, flags);
+    const formatCheck = validateOneOf(flags.format, "format", ["json", "toon"] as const, {
+      allowUndefined: true,
+      caseInsensitive: true,
+    });
+    if (!formatCheck.ok) {
+      reportError(formatCheck.message, {
+        code: ErrorCode.INVALID_INPUT,
+        details: formatCheck.details,
+        hint: "Valid formats: json, toon",
+        json: flags.json,
+        format: flags.format,
+        command,
+        startedAtMs,
+      });
+      return;
+    }
 
-    if (flags.json) {
-      printJsonResult(command, result, { startedAtMs });
+    const normalizedFlags: SimilarFlags = {
+      ...flags,
+      ...(formatCheck.value !== undefined ? { format: formatCheck.value } : {}),
+    };
+
+    const result = await generateSimilarResults(query, normalizedFlags);
+
+    if (normalizedFlags.json || isToonOutput(normalizedFlags)) {
+      printStructuredResult(command, result, normalizedFlags, { startedAtMs });
       return;
     }
 
@@ -197,6 +221,13 @@ export async function similarCommand(query: string, flags: SimilarFlags): Promis
       message.includes("Invalid --scope")
         ? ErrorCode.INVALID_INPUT
         : ErrorCode.INTERNAL_ERROR;
-    reportError(err instanceof Error ? err : message, { code, details: { query }, json: flags.json, command, startedAtMs });
+    reportError(err instanceof Error ? err : message, {
+      code,
+      details: { query },
+      json: flags.json,
+      format: flags.format,
+      command,
+      startedAtMs,
+    });
   }
 }

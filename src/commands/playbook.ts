@@ -1,6 +1,6 @@
 import { loadConfig } from "../config.js";
 import { loadMergedPlaybook, addBullet, deprecateBullet, savePlaybook, findBullet, getActiveBullets, loadPlaybook } from "../playbook.js";
-import { fileExists, now, resolveRepoDir, truncate, confirmDangerousAction, getCliName, printJsonResult, reportError, expandPath } from "../utils.js";
+import { fileExists, now, resolveRepoDir, truncate, confirmDangerousAction, getCliName, isToonOutput, printStructuredResult, printJsonResult, reportError, validateOneOf, expandPath } from "../utils.js";
 import { withLock } from "../lock.js";
 import { getEffectiveScore, getDecayedCounts } from "../scoring.js";
 import { PlaybookBullet, Playbook, PlaybookSchema, PlaybookBulletSchema, ErrorCode } from "../types.js";
@@ -337,6 +337,8 @@ export async function playbookCommand(
   flags: {
     category?: string;
     json?: boolean;
+    format?: "json" | "toon";
+    stats?: boolean;
     hard?: boolean;
     yes?: boolean;
     dryRun?: boolean;
@@ -687,6 +689,27 @@ export async function playbookCommand(
   }
 
   if (action === "list") {
+    const formatCheck = validateOneOf(flags.format, "format", ["json", "toon"] as const, {
+      allowUndefined: true,
+      caseInsensitive: true,
+    });
+    if (!formatCheck.ok) {
+      reportError(formatCheck.message, {
+        code: ErrorCode.INVALID_INPUT,
+        details: formatCheck.details,
+        hint: "Valid formats: json, toon",
+        json: flags.json,
+        format: flags.format,
+        command,
+        startedAtMs,
+      });
+      return;
+    }
+    const normalizedFlags = {
+      ...flags,
+      ...(formatCheck.value !== undefined ? { format: formatCheck.value } : {}),
+    };
+
     const playbook = await loadMergedPlaybook(config);
     let bullets = getActiveBullets(playbook);
     
@@ -694,8 +717,8 @@ export async function playbookCommand(
       bullets = bullets.filter((b: any) => b.category === flags.category);
     }
 
-    if (flags.json) {
-      printJsonResult(command, { bullets }, { startedAtMs });
+    if (normalizedFlags.json || isToonOutput(normalizedFlags)) {
+      printStructuredResult(command, { bullets }, normalizedFlags, { startedAtMs });
     } else {
       const style = getOutputStyle();
       const cli = getCliName();
