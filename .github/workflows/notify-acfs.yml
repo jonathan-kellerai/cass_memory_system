@@ -31,18 +31,20 @@ jobs:
   notify-acfs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      ACFS_TOKEN: ${{ secrets.ACFS_REPO_DISPATCH_TOKEN }}
 
     steps:
-      - name: Validate dispatch token
-        if: ${{ secrets.ACFS_REPO_DISPATCH_TOKEN == '' }}
+      - name: Skip dispatch when token missing
+        if: ${{ env.ACFS_TOKEN == '' }}
         run: |
-          echo "::warning::Missing secret ACFS_REPO_DISPATCH_TOKEN. Add a PAT with repo access for Dicklesworthstone/agentic_coding_flywheel_setup."
-          exit 1
+          echo "ACFS_REPO_DISPATCH_TOKEN not set; skipping ACFS dispatch."
 
       - name: Trigger ACFS checksum update
+        if: ${{ env.ACFS_TOKEN != '' }}
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.ACFS_REPO_DISPATCH_TOKEN }}
+          token: ${{ env.ACFS_TOKEN }}
           repository: Dicklesworthstone/agentic_coding_flywheel_setup
           event-type: upstream-changed
           client-payload: |
