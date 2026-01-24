@@ -661,7 +661,7 @@ describe("E2E: diary handleDiaryOutput", () => {
           preferences: [],
           tags: [],
           relatedSessions: [
-            { agent: "cursor", sessionPath: "/cursor/session1.jsonl", snippet: "Fixed similar auth issue in another project last week" }
+            { agent: "cursor", sessionPath: "/cursor/session1.jsonl", snippet: "Fixed similar auth issue in another project last week", relevanceScore: 0.85 }
           ],
           searchAnchors: []
         };

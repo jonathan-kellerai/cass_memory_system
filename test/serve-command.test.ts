@@ -125,7 +125,10 @@ describe("serve.ts helper functions", () => {
 
     it("includes data when provided", () => {
       const err = buildError("req-1", "Error with data", -32001, { details: "extra" });
-      expect(err.error.data).toEqual({ details: "extra" });
+      expect("error" in err).toBe(true);
+      if ("error" in err) {
+        expect(err.error.data).toEqual({ details: "extra" });
+      }
     });
 
     it("handles null id", () => {
