@@ -23,7 +23,7 @@ import { isLLMAvailable, getAvailableProviders, validateApiKey } from "../llm.js
 import { SECRET_PATTERNS, compileExtraPatterns } from "../sanitize.js";
 import { loadPlaybook, savePlaybook, createEmptyPlaybook } from "../playbook.js";
 import { withLock } from "../lock.js";
-import { Config, Playbook } from "../types.js";
+import { Config, Playbook, ErrorCode } from "../types.js";
 import { loadTraumas } from "../trauma.js";
 import chalk from "chalk";
 import path from "node:path";
