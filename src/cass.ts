@@ -585,11 +585,21 @@ function classifyCassSearchError(err: any, query: string): CassDegradedInfo {
     };
   }
 
+  // Handle FTS table errors (e.g., "no such table: fts_messages")
+  if (lower.includes("no such table") && lower.includes("fts")) {
+    return {
+      available: false,
+      reason: "FTS_TABLE_MISSING",
+      message: "cass FTS table is missing; run 'cass doctor --fix' to recreate it.",
+      suggestedFix: ["cass doctor --fix", "cass health"],
+    };
+  }
+
   return {
     available: false,
     reason: "OTHER",
     message: msg ? `cass search failed: ${msg}` : "cass search failed",
-    suggestedFix: ["cm doctor", "cass health"],
+    suggestedFix: ["cass doctor --fix", "cm doctor", "cass health"],
   };
 }
 
