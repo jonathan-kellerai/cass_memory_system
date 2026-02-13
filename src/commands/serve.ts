@@ -269,7 +269,8 @@ async function handleToolCall(name: string, args: any): Promise<any> {
         history: history.value,
         days: days.value,
         workspace: workspace.value,
-        json: true
+        json: true,
+        skipSemantic: true,
       });
       return context.result;
     }
@@ -692,6 +693,33 @@ export async function serveCommand(options: { port?: number; host?: string } = {
     server.listen(port, host, () => resolve());
     server.on("error", reject);
   });
+
+  // Server limits to prevent connection buildup
+  server.setTimeout(30_000);
+  server.keepAliveTimeout = 5_000;
+
+  // Graceful shutdown — overrides the global gracefulExit from cm.ts
+  const cleanup = () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 5_000).unref();
+  };
+  process.removeAllListeners("SIGTERM");
+  process.removeAllListeners("SIGINT");
+  process.on("SIGTERM", cleanup);
+  process.on("SIGINT", cleanup);
+
+  // Memory watchdog — exit if RSS exceeds ceiling (default 2 GB)
+  const MEMORY_CEILING_MB = parseInt(process.env.CM_SERVE_MEMORY_CEILING_MB || "2048", 10);
+  const watchdog = setInterval(() => {
+    const rssMB = Math.round(process.memoryUsage.rss() / 1024 / 1024);
+    if (rssMB > MEMORY_CEILING_MB) {
+      warn(`[serve] RSS ${rssMB}MB > ceiling ${MEMORY_CEILING_MB}MB. Exiting.`);
+      clearInterval(watchdog);
+      server.close(() => process.exit(42));
+      setTimeout(() => process.exit(43), 5_000).unref();
+    }
+  }, 60_000);
+  watchdog.unref();
 
   const baseUrl = `http://${host}:${port}`;
   log(`MCP HTTP server listening on ${baseUrl}`, true);

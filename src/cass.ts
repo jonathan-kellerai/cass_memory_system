@@ -513,12 +513,27 @@ async function sshCassSearch(
   ];
 
   const timeoutSeconds = options.timeout || 15;
-  const { stdout } = await runner.execFile("ssh", sshArgs, {
-    maxBuffer: 50 * 1024 * 1024,
-    timeout: timeoutSeconds * 1000,
+
+  const result = await new Promise<string>((resolve, reject) => {
+    const proc = runner.spawn("ssh", sshArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      proc.kill("SIGTERM");
+      setTimeout(() => { if (!proc.killed) proc.kill("SIGKILL"); }, 1000).unref();
+      reject(new Error(`SSH timeout after ${timeoutSeconds}s`));
+    }, timeoutSeconds * 1000);
+    timer.unref();
+
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      code === 0 ? resolve(stdout) : reject(new Error(`ssh exit ${code}`));
+    });
+    proc.on("error", (err) => { clearTimeout(timer); reject(err); });
   });
 
-  const rawHits = parseCassJsonOutput(stdout);
+  const rawHits = parseCassJsonOutput(result);
 
   let hitsArray: unknown[];
   if (Array.isArray(rawHits)) {

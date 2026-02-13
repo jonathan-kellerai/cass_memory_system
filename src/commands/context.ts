@@ -140,6 +140,7 @@ export interface ContextFlags {
   stats?: boolean;
   logContext?: boolean;
   session?: string;
+  skipSemantic?: boolean;  // Skip ONNX + embeddings (serve mode)
 }
 
 export interface ContextComputation {
@@ -180,6 +181,7 @@ export async function scoreBulletsEnhanced(
     json?: boolean;
     queryEmbedding?: number[];
     skipEmbeddingLoad?: boolean;
+    disableSemantic?: boolean;
     onSemanticProgress?: (event: {
       phase: "start" | "progress" | "done";
       current: number;
@@ -197,7 +199,7 @@ export async function scoreBulletsEnhanced(
     typeof config.embeddingModel === "string" && config.embeddingModel.trim() !== ""
       ? config.embeddingModel.trim()
       : undefined;
-  const semanticEnabled = config.semanticSearchEnabled && embeddingModel !== "none";
+  const semanticEnabled = config.semanticSearchEnabled && embeddingModel !== "none" && !options.disableSemantic;
 
   const semanticWeight = clamp01(
     typeof config.semanticWeight === "number" ? config.semanticWeight : 0.6
@@ -302,6 +304,7 @@ export async function generateContextResult(
 
   const scoredBullets = await scoreBulletsEnhanced(activeBullets, task, keywords, config, {
     json: flags.json,
+    disableSemantic: flags.skipSemantic,
     onSemanticProgress: options.onProgress
       ? (event) =>
         options.onProgress?.({

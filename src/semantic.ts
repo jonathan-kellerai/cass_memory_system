@@ -146,6 +146,11 @@ export async function getEmbedder(
   return embedderPromise;
 }
 
+export function clearEmbedder(): void {
+  embedderPromise = null;
+  embedderModel = null;
+}
+
 export async function embedText(
   text: string,
   options: { model?: string } = {}
