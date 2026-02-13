@@ -353,6 +353,7 @@ export async function playbookCommand(
     check?: boolean;
     strict?: boolean;
     repo?: boolean;
+    noDedup?: boolean;
   }
 ) {
   const startedAtMs = Date.now();
@@ -906,7 +907,8 @@ export async function playbookCommand(
           kind: "workflow_rule",
         },
         "manual-cli",
-        config.scoring.decayHalfLifeDays
+        config.scoring.decayHalfLifeDays,
+        { dedup: !flags.noDedup }
       );
 
       await savePlaybook(playbook, targetPath);

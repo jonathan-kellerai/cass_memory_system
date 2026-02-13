@@ -302,11 +302,19 @@ describe("CLI Command Chains E2E", () => {
       runCm(["init", "--json"], testDir);
 
       // Add multiple bullets with different characteristics
+      // Each bullet must be semantically distinct to pass dedup check
+      const ruleContents = [
+        "Always run linting before committing code changes",
+        "Use TypeScript strict mode in all new projects",
+        "Prefer named exports over default exports everywhere",
+        "Handle async errors with try-catch blocks consistently",
+        "Write unit tests before implementing new features",
+      ];
       const bullets: string[] = [];
       for (let i = 0; i < 5; i++) {
         const addResult = runCm([
           "playbook", "add",
-          `Test rule ${i + 1} for stats flow`,
+          ruleContents[i],
           "--category", i < 3 ? "primary" : "secondary",
           "--json"
         ], testDir);

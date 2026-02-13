@@ -76,6 +76,7 @@ export function createTestConfig(overrides: Partial<Config> = {}): Config {
       warningThreshold: 80,
       currency: "USD"
     },
+    maxTotalBullets: 1000,
     scoring: {
       decayHalfLifeDays: 90,
       harmfulMultiplier: 4,

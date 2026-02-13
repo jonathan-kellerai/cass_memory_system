@@ -16,9 +16,53 @@ import {
   validateNonEmptyString,
   validateOneOf,
   validatePositiveInt,
+  expandPath,
 } from "../utils.js";
 import { analyzeScoreDistribution, getEffectiveScore, isStale } from "../scoring.js";
 import { ErrorCode, type PlaybookBullet } from "../types.js";
+import type { Config, Playbook } from "../types.js";
+
+// --- Module-level caches for serve mode ---
+// Only active when the HTTP server is running (serveModeActive=true).
+// This prevents stale cache across test isolation boundaries.
+let serveModeActive = false;
+const CACHE_TTL_MS = 30_000; // 30 seconds
+
+let cachedPlaybook: { data: Playbook; loadedAt: number; mtime: number; path: string } | null = null;
+
+async function getCachedPlaybook(config: Config): Promise<Playbook> {
+  if (!serveModeActive) return loadMergedPlaybook(config);
+
+  const playbookPath = expandPath(config.playbookPath);
+  const { default: fsp } = await import("node:fs/promises");
+  const stat = await fsp.stat(playbookPath);
+  const mtime = stat.mtimeMs;
+
+  if (cachedPlaybook && cachedPlaybook.path === playbookPath &&
+      cachedPlaybook.mtime === mtime &&
+      Date.now() - cachedPlaybook.loadedAt < CACHE_TTL_MS) {
+    return cachedPlaybook.data;
+  }
+
+  const data = await loadMergedPlaybook(config);
+  cachedPlaybook = { data, loadedAt: Date.now(), mtime, path: playbookPath };
+  return data;
+}
+
+let cachedConfig: { data: Config; loadedAt: number; cassHome: string } | null = null;
+
+async function getCachedConfig(): Promise<Config> {
+  if (!serveModeActive) return loadConfig();
+
+  const cassHome = process.env.CASS_HOME || "";
+  if (cachedConfig && cachedConfig.cassHome === cassHome &&
+      Date.now() - cachedConfig.loadedAt < CACHE_TTL_MS) {
+    return cachedConfig.data;
+  }
+  const data = await loadConfig();
+  cachedConfig = { data, loadedAt: Date.now(), cassHome };
+  return data;
+}
 
 // Simple per-tool argument validation helper to reduce drift.
 function assertArgs(args: any, required: Record<string, string>) {
@@ -306,7 +350,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
           : undefined;
       const durationSec = validatePositiveInt(args?.durationSec, "durationSec", { min: 0, allowUndefined: true });
       if (!durationSec.ok) throw new Error(durationSec.message);
-      const config = await loadConfig();
+      const config = await getCachedConfig();
       return recordOutcome({
         sessionId: args?.sessionId,
         outcome: args.outcome,
@@ -342,14 +386,14 @@ async function handleToolCall(name: string, args: any): Promise<any> {
       const workspaceCheck = validateNonEmptyString(args?.workspace, "workspace", { allowUndefined: true });
       if (!workspaceCheck.ok) throw new Error(workspaceCheck.message);
       const workspace = workspaceCheck.value;
-      const config = await loadConfig();
+      const config = await getCachedConfig();
 
       const result: { playbook?: any[]; cass?: any[] } = {};
       const q = queryCheck.value.toLowerCase();
 
       if (scope === "playbook" || scope === "both") {
         const t0 = performance.now();
-        const playbook = await loadMergedPlaybook(config);
+        const playbook = await getCachedPlaybook(config);
         const bullets = getActiveBullets(playbook);
         result.playbook = bullets
           .filter((b) => {
@@ -384,7 +428,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
     }
     case "memory_reflect": {
       const t0 = performance.now();
-      const config = await loadConfig();
+      const config = await getCachedConfig();
 
       const daysCheck = validatePositiveInt(args?.days, "days", { min: 1, allowUndefined: true });
       if (!daysCheck.ok) throw new Error(daysCheck.message);
@@ -477,10 +521,10 @@ function buildError(id: string | number | null, message: string, code = -32000, 
 }
 
 async function handleResourceRead(uri: string): Promise<any> {
-  const config = await loadConfig();
+  const config = await getCachedConfig();
   switch (uri) {
     case "cm://playbook": {
-      const playbook = await loadMergedPlaybook(config);
+      const playbook = await getCachedPlaybook(config);
       return { uri, mimeType: "application/json", data: playbook };
     }
     case "cm://diary": {
@@ -493,7 +537,7 @@ async function handleResourceRead(uri: string): Promise<any> {
     }
     case "cm://stats":
     case "memory://stats": {
-      const playbook = await loadMergedPlaybook(config);
+      const playbook = await getCachedPlaybook(config);
       const stats = computePlaybookStats(playbook, config);
       return { uri, mimeType: "application/json", data: stats };
     }
@@ -631,6 +675,8 @@ export async function serveCommand(options: { port?: number; host?: string } = {
   } else if (host === "0.0.0.0" && process.env.NODE_ENV !== "development") {
     warn("Warning: Binding to 0.0.0.0 exposes the server to the network. Ensure this is intended.");
   }
+
+  serveModeActive = true;
 
   const server = http.createServer(async (req, res) => {
     if (req.method !== "POST") {

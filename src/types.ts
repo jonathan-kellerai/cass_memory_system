@@ -390,6 +390,7 @@ export const ConfigSchema = z.object({
   // Set to true to include all sessions (ignore exclusion patterns)
   sessionIncludeAll: z.boolean().default(false),
   dedupSimilarityThreshold: z.number().default(0.85),
+  maxTotalBullets: z.number().default(1000),
   pruneHarmfulThreshold: z.number().default(3),
   defaultDecayHalfLife: z.number().default(90),
   maxBulletsInContext: z.number().default(50),

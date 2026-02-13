@@ -382,6 +382,73 @@ async function computeDoctorChecks(
     }
   }
 
+  // 2.7) Playbook size and health
+  if (globalPlaybookExists) {
+    const globalPlaybookPath2 = path.join(globalDir, "playbook.yaml");
+    try {
+      const playbook = await loadPlaybook(globalPlaybookPath2);
+      const bulletCount = playbook.bullets.length;
+      const activeCount = playbook.bullets.filter((b: any) => !b.deprecated).length;
+      const deprecatedCount = bulletCount - activeCount;
+
+      if (activeCount > 500) {
+        checks.push({
+          category: "Playbook Health",
+          item: "Bullet Count",
+          status: activeCount > 1000 ? "fail" : "warn",
+          message: `${activeCount} active bullets (recommended: <500)`,
+          details: { activeCount, deprecatedCount, total: bulletCount },
+        });
+      } else {
+        checks.push({
+          category: "Playbook Health",
+          item: "Bullet Count",
+          status: "pass",
+          message: `${activeCount} active bullets`,
+          details: { activeCount, deprecatedCount, total: bulletCount },
+        });
+      }
+
+      if (deprecatedCount > 50) {
+        checks.push({
+          category: "Playbook Health",
+          item: "Deprecated Accumulation",
+          status: "warn",
+          message: `${deprecatedCount} deprecated bullets still in playbook`,
+          details: { deprecatedCount },
+        });
+      }
+
+      const zeroFeedback = playbook.bullets.filter(
+        (b: any) => !b.deprecated && (b.helpfulCount || 0) === 0 && (b.harmfulCount || 0) === 0
+      ).length;
+      const zeroRatio = zeroFeedback / Math.max(1, activeCount);
+      if (zeroRatio > 0.5) {
+        checks.push({
+          category: "Playbook Health",
+          item: "Feedback Coverage",
+          status: "warn",
+          message: `${(zeroRatio * 100).toFixed(0)}% of bullets have zero feedback — decay system inactive`,
+          details: { zeroFeedback, activeCount, zeroRatio },
+        });
+      }
+
+      const playbookStat = await fs.stat(globalPlaybookPath2);
+      const sizeMB = playbookStat.size / (1024 * 1024);
+      if (sizeMB > 5) {
+        checks.push({
+          category: "Playbook Health",
+          item: "File Size",
+          status: sizeMB > 10 ? "fail" : "warn",
+          message: `Playbook file is ${sizeMB.toFixed(1)} MB (recommended: <2 MB)`,
+          details: { sizeMB },
+        });
+      }
+    } catch {
+      // loadPlaybook already checked above; this is best-effort
+    }
+  }
+
   // 3) LLM config (optional - system works without it via graceful degradation)
   const availableProviders = getAvailableProviders();
   const hasAnyApiKey = availableProviders.length > 0 || !!config.apiKey;

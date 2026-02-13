@@ -53,13 +53,12 @@ function matchesPruneCriteria(
 
   if (
     flags.staleDays != null &&
-    bullet.maturity === "candidate" &&
     bullet.helpfulCount === 0 &&
     bullet.harmfulCount === 0
   ) {
     const age = daysSinceCreation(bullet);
     if (age > flags.staleDays) {
-      return { matches: true, reason: `stale candidate (${age}d old, 0 feedback)` };
+      return { matches: true, reason: `stale zero-feedback (${age}d old)` };
     }
   }
 

@@ -305,6 +305,7 @@ export async function generateContextResult(
   const scoredBullets = await scoreBulletsEnhanced(activeBullets, task, keywords, config, {
     json: flags.json,
     disableSemantic: flags.skipSemantic,
+    skipEmbeddingLoad: flags.skipSemantic,
     onSemanticProgress: options.onProgress
       ? (event) =>
         options.onProgress?.({

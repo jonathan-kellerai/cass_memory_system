@@ -411,12 +411,12 @@ describe("E2E: Team Workflow", () => {
       // Setup: global + repo rules
       runCm(["init", "--json"], leadHome, { HOME: leadHome });
       runCm(
-        ["playbook", "add", "Global rule 1", "--json"],
+        ["playbook", "add", "Always run linting before committing changes", "--json"],
         leadHome,
         { HOME: leadHome }
       );
       runCm(
-        ["playbook", "add", "Global rule 2", "--json"],
+        ["playbook", "add", "Use TypeScript strict mode in all projects", "--json"],
         leadHome,
         { HOME: leadHome }
       );
@@ -425,7 +425,7 @@ describe("E2E: Team Workflow", () => {
       try {
         runCm(["init", "--repo", "--json"], repoDir, { HOME: leadHome });
         runCm(
-          ["playbook", "add", "Repo rule 1", "--json"],
+          ["playbook", "add", "Prefer named exports over default exports", "--json"],
           repoDir,
           { HOME: leadHome }
         );

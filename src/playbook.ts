@@ -433,17 +433,54 @@ export function findBullet(playbook: Playbook, id: string): PlaybookBullet | und
 
 type PartialBulletData = Partial<z.infer<typeof PlaybookBulletSchema>> & { content: string; category: string };
 
+const MAX_TOTAL_BULLETS = 1000;
+
+export interface AddBulletOptions {
+  /** Enable content dedup check (default: false — opt-in via CLI). */
+  dedup?: boolean;
+  /** Jaccard similarity threshold for dedup (default: 0.75). */
+  dedupThreshold?: number;
+}
+
 export function addBullet(
-  playbook: Playbook, 
-  data: PartialBulletData, 
+  playbook: Playbook,
+  data: PartialBulletData,
   sourceSession: string,
-  defaultDecayHalfLifeDays: number = 90
+  defaultDecayHalfLifeDays: number = 90,
+  options?: AddBulletOptions
 ): PlaybookBullet {
-  const agent = extractAgentFromPath(sourceSession); 
+  const agent = extractAgentFromPath(sourceSession);
   const requestedId =
     typeof data.id === "string" && data.id.trim() !== "" ? data.id.trim() : undefined;
   if (requestedId && playbook.bullets.some((b) => b.id === requestedId)) {
     throw new Error(`Bullet id already exists: ${requestedId}`);
+  }
+
+  // Content dedup check (opt-in — enabled by `cm playbook add` CLI)
+  if (options?.dedup) {
+    const threshold = options?.dedupThreshold ?? 0.75;
+    const normalizedNew = data.content.toLowerCase().trim();
+    for (const existing of playbook.bullets) {
+      if (existing.deprecated) continue;
+      const normalizedExisting = existing.content.toLowerCase().trim();
+      if (normalizedNew === normalizedExisting) {
+        throw new Error(`Duplicate bullet content: "${data.content.slice(0, 60)}..."`);
+      }
+      if (jaccardSimilarity(normalizedNew, normalizedExisting) >= threshold) {
+        throw new Error(
+          `Similar bullet exists (id=${existing.id}): "${existing.content.slice(0, 60)}..."`
+        );
+      }
+    }
+  }
+
+  // Max bullets enforcement
+  const activeCount = playbook.bullets.filter(b => !b.deprecated).length;
+  if (activeCount >= MAX_TOTAL_BULLETS) {
+    throw new Error(
+      `Playbook at capacity (${MAX_TOTAL_BULLETS} active bullets). ` +
+      `Run 'cm prune --deprecated --stale-days 30' before adding more.`
+    );
   }
 
   const newBullet: PlaybookBullet = {
@@ -472,7 +509,7 @@ export function addBullet(
     deprecatedAt: undefined,
     confidenceDecayHalfLifeDays: defaultDecayHalfLifeDays
   };
-  
+
   playbook.bullets.push(newBullet);
   return newBullet;
 }
