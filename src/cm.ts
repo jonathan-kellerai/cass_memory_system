@@ -27,6 +27,7 @@ import { similarCommand } from "./commands/similar.js";
 import { onboardCommand } from "./commands/onboard.js";
 import { guardCommand } from "./commands/guard.js";
 import { traumaCommand } from "./commands/trauma.js";
+import { pruneCommand } from "./commands/prune.js";
 import { infoCommand } from "./info.js";
 import { examplesCommand } from "./examples.js";
 
@@ -377,6 +378,33 @@ program.command("stale")
     ])
   )
   .action(async (opts: any) => await staleCommand(opts));
+
+// --- Prune ---
+program.command("prune")
+  .description("Bulk-remove bullets matching criteria")
+  .option("--deprecated", "Remove all deprecated bullets")
+  .option("--stale-days <n>", "Remove candidates with 0 feedback older than N days", toInt)
+  .option("--content-prefix <prefix>", "Remove bullets whose content starts with prefix")
+  .option("--dry-run", "Show what would be removed without making changes")
+  .option("--yes", "Skip confirmation prompt")
+  .option("-j, --json", "Output JSON")
+  .addHelpText("after", () =>
+    formatCommandExamples([
+      "prune --deprecated --dry-run",
+      "prune --content-prefix \"FAILURE:\" --dry-run",
+      "prune --stale-days 30 --dry-run",
+      "prune --deprecated --stale-days 60 --yes",
+      "prune --content-prefix \"FAILURE:\" --yes --json",
+    ])
+  )
+  .action(async (opts: any) => await pruneCommand({
+    deprecated: opts.deprecated,
+    staleDays: opts.staleDays,
+    contentPrefix: opts.contentPrefix,
+    dryRun: opts.dryRun,
+    yes: opts.yes,
+    json: opts.json,
+  }));
 
 // --- Why ---
 program.command("why")
@@ -912,6 +940,7 @@ export function hasJsonFlag(argv: string[] = process.argv): boolean {
     "stats",
     "top",
     "stale",
+    "prune",
     "why",
     "undo",
     "usage",
