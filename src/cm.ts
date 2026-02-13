@@ -335,10 +335,12 @@ program.command("stats")
   .option("-j, --json", "Output JSON")
   .option("--format <json|toon>", "Output format: json or toon (overrides --json)")
   .option("--stats", "Show token statistics on stderr (JSON vs TOON)")
+  .option("--fast", "Skip merge candidates and semantic duplicate detection")
   .addHelpText("after", () =>
     formatCommandExamples([
       "stats",
       "stats --json",
+      "stats --fast --json",
       "stats --json > stats.json",
       "stats --format toon --stats",
     ])

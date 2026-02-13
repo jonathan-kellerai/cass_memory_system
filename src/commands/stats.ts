@@ -11,7 +11,7 @@ import chalk from "chalk";
 import { iconPrefix } from "../output.js";
 import { ErrorCode } from "../types.js";
 
-export async function statsCommand(options: { json?: boolean; format?: "json" | "toon"; stats?: boolean }): Promise<void> {
+export async function statsCommand(options: { json?: boolean; format?: "json" | "toon"; stats?: boolean; fast?: boolean }): Promise<void> {
   const startedAtMs = Date.now();
   const formatCheck = validateOneOf(options.format, "format", ["json", "toon"] as const, {
     allowUndefined: true,
@@ -75,10 +75,12 @@ export async function statsCommand(options: { json?: boolean; format?: "json" | 
 
   // Only check active bullets for merge candidates to improve performance and relevance
   // Prioritize recent bullets (reverse order) for merge checks
-  const mergeCandidates = findMergeCandidates([...activeBullets].reverse(), 0.8, 10);
+  const mergeCandidates = options.fast
+    ? []
+    : findMergeCandidates([...activeBullets].reverse(), 0.8, 10);
 
   let semanticMergeCandidates: Array<{ a: string; b: string; similarity: number }> = [];
-  if (config.semanticSearchEnabled && config.embeddingModel !== "none") {
+  if (!options.fast && config.semanticSearchEnabled && config.embeddingModel !== "none") {
     try {
       const dupes = await findSemanticDuplicates(activeBullets, 0.85, {
         model: config.embeddingModel,
