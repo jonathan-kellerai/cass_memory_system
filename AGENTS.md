@@ -151,7 +151,7 @@ Common pitfalls:
 
 All issue tracking goes through **br**. No other TODO systems.
 
-**Note:** br is non-invasive and never executes git commands. You must manually run git add/commit/push after `br sync --flush-only`.
+**Note:** br is non-invasive and never executes git commands. You must manually run git add/commit/push after `bd sync`.
 
 Key invariants:
 
@@ -163,27 +163,27 @@ Key invariants:
 Check ready work:
 
 ```bash
-br ready --json
+bd ready --json
 ```
 
 Create issues:
 
 ```bash
-br create "Issue title" -t bug|feature|task -p 0-4 --json
-br create "Issue title" -p 1 --deps discovered-from:br-123 --json
+bd create "Issue title" -t bug|feature|task -p 0-4 --json
+bd create "Issue title" -p 1 --deps discovered-from:br-123 --json
 ```
 
 Update:
 
 ```bash
-br update br-42 --status in_progress --json
-br update br-42 --priority 1 --json
+bd update br-42 --status in_progress --json
+bd update br-42 --priority 1 --json
 ```
 
 Complete:
 
 ```bash
-br close br-42 --reason "Completed" --json
+bd close br-42 --reason "Completed" --json
 ```
 
 Types:
@@ -200,16 +200,16 @@ Priorities:
 
 Agent workflow:
 
-1. `br ready` to find unblocked work.
-2. Claim: `br update <id> --status in_progress`.
+1. `bd ready` to find unblocked work.
+2. Claim: `bd update <id> --status in_progress`.
 3. Implement + test.
 4. If you discover new work, create a new bead with `discovered-from:<parent-id>`.
 5. Close when done.
-6. Sync and commit: `br sync --flush-only`, then `git add .beads/ && git commit`.
+6. Sync and commit: `bd sync`, then `git add .beads/ && git commit`.
 
 Sync workflow:
 
-- Run `br sync --flush-only` to export to `.beads/issues.jsonl`.
+- Run `bd sync` to export to `.beads/issues.jsonl`.
 - Then manually run `git add .beads/` and `git commit` to persist changes.
 - br imports from JSONL when newer (e.g. after `git pull`).
 
@@ -494,74 +494,6 @@ Parse: `file:line:col` → location | 💡 → how to fix | Exit 0/1 → pass/fa
 ## Contribution Policy
 
 The README must include the "About Contributions" disclaimer at the end explaining that outside contributions are not accepted directly. Do not remove this policy text.
-
-<!-- bv-agent-instructions-v1 -->
-
----
-
-## Beads Workflow Integration
-
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) for issue tracking. Issues are stored in `.beads/` and tracked in git.
-
-**Note:** br is non-invasive and never executes git commands. You must manually run `git add .beads/` and `git commit` after `br sync --flush-only`.
-
-### Essential Commands
-
-```bash
-# View issues (launches TUI - avoid in automated sessions)
-bv
-
-# CLI commands for agents (use these instead)
-br ready              # Show issues ready to work (no blockers)
-br list --status=open # All open issues
-br show <id>          # Full issue details with dependencies
-br create --title="..." --type=task --priority=2
-br update <id> --status=in_progress
-br close <id> --reason="Completed"
-br close <id1> <id2>  # Close multiple issues at once
-br sync --flush-only  # Export to JSONL
-git add .beads/
-git commit -m "sync beads"
-```
-
-### Workflow Pattern
-
-1. **Start**: Run `br ready` to find actionable work
-2. **Claim**: Use `br update <id> --status=in_progress`
-3. **Work**: Implement the task
-4. **Complete**: Use `br close <id>`
-5. **Sync**: Always run `br sync --flush-only` at session end, then `git add .beads/ && git commit`
-
-### Key Concepts
-
-- **Dependencies**: Issues can block other issues. `br ready` shows only unblocked work.
-- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers, not words)
-- **Types**: task, bug, feature, epic, question, docs
-- **Blocking**: `br dep add <issue> <depends-on>` to add dependencies
-
-### Session Protocol
-
-**Before ending any session, run this checklist:**
-
-```bash
-git status              # Check what changed
-git add <files>         # Stage code changes
-br sync --flush-only    # Export beads to JSONL
-git add .beads/
-git commit -m "..."     # Commit code and beads
-git push                # Push to remote
-```
-
-### Best Practices
-
-- Check `br ready` at session start to find available work
-- Update status as you work (in_progress → closed)
-- Create new issues with `br create` when you discover tasks
-- Use descriptive titles and set appropriate priority/type
-- Always `br sync --flush-only` before ending session
-
-<!-- end-bv-agent-instructions -->
-
 ---
 
 ## Note for Codex/GPT-5.2
@@ -585,3 +517,66 @@ NEVER EVER DO THAT AGAIN. The answer is literally ALWAYS the same: those are cha
 ## Note on Built-in TODO Functionality
 
 Also, if I ask you to explicitly use your built-in TODO functionality, don't complain about this and say you need to use beads. You can use built-in TODOs if I tell you specifically to do so. Always comply with such orders.
+
+<!-- beads-agent-instructions-v2 -->
+
+---
+
+## Beads Workflow Integration
+
+This project uses [beads](https://github.com/steveyegge/beads) for issue tracking. Issues live in `.beads/` and are tracked in git.
+
+Two CLIs: **bd** (issue CRUD) and **bv** (graph-aware triage, read-only).
+
+### bd: Issue Management
+
+```bash
+bd ready              # Unblocked issues ready to work
+bd list --status=open # All open issues
+bd show <id>          # Full details with dependencies
+bd create --title="..." --type=task --priority=2
+bd update <id> --status=in_progress
+bd close <id>         # Mark complete
+bd close <id1> <id2>  # Close multiple
+bd dep add <a> <b>    # a depends on b
+bd sync               # Sync with git
+```
+
+### bv: Graph Analysis (read-only)
+
+**NEVER run bare `bv`** — it launches interactive TUI. Always use `--robot-*` flags:
+
+```bash
+bv --robot-triage     # Ranked picks, quick wins, blockers, health
+bv --robot-next       # Single top pick + claim command
+bv --robot-plan       # Parallel execution tracks
+bv --robot-alerts     # Stale issues, cascades, mismatches
+bv --robot-insights   # Full graph metrics: PageRank, betweenness, cycles
+```
+
+### Workflow
+
+1. **Start**: `bd ready` (or `bv --robot-triage` for graph analysis)
+2. **Claim**: `bd update <id> --status=in_progress`
+3. **Work**: Implement the task
+4. **Complete**: `bd close <id>`
+5. **Sync**: `bd sync` at session end
+
+### Session Close Protocol
+
+```bash
+git status            # Check what changed
+git add <files>       # Stage code changes
+bd sync               # Commit beads changes
+git commit -m "..."   # Commit code
+bd sync               # Commit any new beads changes
+git push              # Push to remote
+```
+
+### Key Concepts
+
+- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (numbers only)
+- **Types**: task, bug, feature, epic, question, docs
+- **Dependencies**: `bd ready` shows only unblocked work
+
+<!-- end-beads-agent-instructions -->
