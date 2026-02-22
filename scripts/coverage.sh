@@ -15,8 +15,8 @@ now_ms() { bun -e 'console.log(Date.now())'; }
 
 start=$(now_ms)
 
-# bun coverage output goes to stdout; capture and also tee to file
-if bun test --coverage --timeout 60000 | tee "$ARTIFACTS/coverage.txt"; then
+# bun writes the coverage table to stderr, not stdout — merge streams so tee captures both
+if bun test --coverage --timeout 60000 2>&1 | tee "$ARTIFACTS/coverage.txt"; then
   status=0
 else
   status=$?

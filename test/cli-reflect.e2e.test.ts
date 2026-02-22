@@ -18,6 +18,7 @@ import { writeFile, readFile, rm, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import yaml from "yaml";
 import { reflectCommand } from "../src/commands/reflect.js";
+import { __resetReflectorStubsForTest } from "../src/llm.js";
 import { withTempCassHome, TestEnv, makeCassStub, createIsolatedEnvironment, cleanupEnvironment } from "./helpers/temp.js";
 import { createTestLogger, TestLogger } from "./helpers/logger.js";
 
@@ -224,6 +225,11 @@ describe("E2E: CLI reflect command", () => {
         const playbookBefore = await readFile(env.playbookPath, "utf-8");
         logger.info("Playbook before reflect", { content: playbookBefore.slice(0, 200) });
 
+        // Stub LLM to avoid real API calls (and timeouts)
+        process.env.CASS_MEMORY_LLM = "none";
+        process.env.CM_REFLECTOR_STUBS = JSON.stringify([{ deltas: [] }]);
+        __resetReflectorStubsForTest();
+
         // Run reflect with dry-run
         const capture = captureConsole();
         try {
@@ -233,6 +239,9 @@ describe("E2E: CLI reflect command", () => {
           logger.warn("Reflect threw error (expected without LLM)", { error: err.message });
         } finally {
           capture.restore();
+          delete process.env.CASS_MEMORY_LLM;
+          delete process.env.CM_REFLECTOR_STUBS;
+          __resetReflectorStubsForTest();
         }
 
         logger.info("Dry-run completed", {
@@ -649,6 +658,11 @@ describe("E2E: CLI reflect command", () => {
         const config = createTestConfig(cassStub);
         await writeFile(env.configPath, JSON.stringify(config, null, 2));
 
+        // Stub LLM to avoid real API calls (and timeouts)
+        process.env.CASS_MEMORY_LLM = "none";
+        process.env.CM_REFLECTOR_STUBS = JSON.stringify([{ deltas: [] }]);
+        __resetReflectorStubsForTest();
+
         // Run reflect with specific session
         const capture = captureConsole();
         try {
@@ -658,6 +672,9 @@ describe("E2E: CLI reflect command", () => {
           logger.info("Expected error without LLM", { message: err.message });
         } finally {
           capture.restore();
+          delete process.env.CASS_MEMORY_LLM;
+          delete process.env.CM_REFLECTOR_STUBS;
+          __resetReflectorStubsForTest();
         }
 
         logger.info("Specific session test completed", {

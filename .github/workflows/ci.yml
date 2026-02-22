@@ -73,9 +73,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Phase 1 thresholds (raise intentionally via PRs).
-      COVERAGE_MIN_FUNCS: "70"
-      COVERAGE_MIN_LINES: "70"
+      # Phase 3 thresholds — achieved 2026-02-22 (robot-docs tests added).
+      COVERAGE_MIN_FUNCS: "85"
+      COVERAGE_MIN_LINES: "83"
 
     steps:
       - uses: actions/checkout@v4

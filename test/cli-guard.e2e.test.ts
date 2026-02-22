@@ -511,7 +511,14 @@ describe("E2E: CLI guard command", () => {
             // Verify pre-commit hook calls the guard script
             const preCommitContent = await readFile(preCommitPath, "utf-8");
             expect(preCommitContent).toContain("trauma-guard-precommit.py");
-            expect(preCommitContent).toContain("#!/bin/sh");
+            // Hook starts with #!/bin/sh when newly created; when appended to an
+            // existing hook (e.g. from a git hooks template) the original shebang
+            // is preserved.  Either way the hook must be an executable shell script.
+            expect(
+              preCommitContent.startsWith("#!/bin/sh") ||
+              preCommitContent.startsWith("#!/bin/bash") ||
+              preCommitContent.startsWith("#!/usr/bin/env")
+            ).toBe(true);
 
             // Verify guard script content
             const guardScriptContent = await readFile(guardScriptPath, "utf-8");

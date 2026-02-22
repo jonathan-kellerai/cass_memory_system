@@ -752,12 +752,17 @@ async function routeRequest(body: JsonRpcRequest): Promise<JsonRpcResponse> {
 }
 
 // Internal exports for unit tests (kept small to avoid expanding public API surface).
+function resetConfigCache(): void {
+  _configCache = null;
+}
+
 export const __test = {
   buildError,
   routeRequest,
   isLoopbackHost,
   headerValue,
   extractBearerToken,
+  resetConfigCache,
 };
 
 export async function serveCommand(options: { port?: number; host?: string } = {}): Promise<void> {

@@ -71,8 +71,8 @@ export function createTestConfig(overrides: Partial<Config> = {}): Config {
       auditLevel: "info"
     },
     budget: {
-      dailyLimit: 1.0,
-      monthlyLimit: 10.0,
+      dailyLimit: 0,
+      monthlyLimit: 0,
       warningThreshold: 80,
       currency: "USD"
     },

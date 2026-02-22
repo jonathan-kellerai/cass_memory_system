@@ -9,11 +9,12 @@
 import { describe, it, expect } from "bun:test";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import yaml from "yaml";
 
 import { __test, computePlaybookStats, serveCommand } from "../src/commands/serve.js";
 import { withTempCassHome } from "./helpers/temp.js";
 
-const { buildError, routeRequest, isLoopbackHost, headerValue, extractBearerToken } = __test;
+const { buildError, routeRequest, isLoopbackHost, headerValue, extractBearerToken, resetConfigCache } = __test;
 
 function captureConsole() {
   const logs: string[] = [];
@@ -815,23 +816,30 @@ describe("tool call validation", () => {
 describe("successful tool calls", () => {
   it("memory_search with playbook scope returns playbook bullets", async () => {
     await withTempCassHome(async (env) => {
-      // Create a playbook with a bullet to search
-      const bullet = {
-        id: "search-test-1",
-        content: "Authentication rule for login",
-        scope: "global",
-        state: "active",
-        kind: "rule",
-        category: "security",
-        helpfulCount: 1,
-        harmfulCount: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+      // Reset config cache so this test reads config from the fresh temp HOME
+      resetConfigCache();
+
+      // Create a proper YAML playbook with a bullet to search
+      const now = new Date().toISOString();
+      const playbook = {
+        schema_version: 2,
+        name: "test-playbook",
+        metadata: { createdAt: now, totalReflections: 0, totalSessionsProcessed: 0 },
+        bullets: [{
+          id: "search-test-1",
+          content: "Authentication rule for login",
+          scope: "global",
+          state: "active",
+          kind: "stack_pattern",
+          category: "security",
+          helpfulCount: 1,
+          harmfulCount: 0,
+          createdAt: now,
+          updatedAt: now
+        }],
+        deprecatedPatterns: []
       };
-      await writeFile(
-        path.join(env.cassMemoryDir, "playbook.jsonl"),
-        JSON.stringify(bullet)
-      );
+      await writeFile(env.playbookPath, yaml.stringify(playbook));
 
       const response = await routeRequest({
         jsonrpc: "2.0",
@@ -845,10 +853,12 @@ describe("successful tool calls", () => {
 
       expect("result" in response).toBe(true);
       if ("result" in response) {
-        expect(response.result.playbook).toBeDefined();
-        expect(Array.isArray(response.result.playbook)).toBe(true);
+        // routeRequest wraps tool results in MCP content format
+        const data = JSON.parse(response.result.content[0].text);
+        expect(data.playbook).toBeDefined();
+        expect(Array.isArray(data.playbook)).toBe(true);
         // Should find our bullet since it contains "authentication"
-        const found = response.result.playbook.find((b: any) => b.id === "search-test-1");
+        const found = data.playbook.find((b: any) => b.id === "search-test-1");
         if (found) {
           expect(found.content).toContain("Authentication");
         }
@@ -858,22 +868,30 @@ describe("successful tool calls", () => {
 
   it("memory_search with both scope searches playbook and cass", async () => {
     await withTempCassHome(async (env) => {
-      // Create a playbook bullet
-      const bullet = {
-        id: "both-test-1",
-        content: "Error handling pattern",
-        scope: "global",
-        state: "active",
-        kind: "heuristic",
-        helpfulCount: 0,
-        harmfulCount: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+      // Reset config cache so this test reads config from the fresh temp HOME
+      resetConfigCache();
+
+      // Create a proper YAML playbook with a bullet to search
+      const now = new Date().toISOString();
+      const playbook = {
+        schema_version: 2,
+        name: "test-playbook",
+        metadata: { createdAt: now, totalReflections: 0, totalSessionsProcessed: 0 },
+        bullets: [{
+          id: "both-test-1",
+          content: "Error handling pattern",
+          scope: "global",
+          state: "active",
+          kind: "workflow_rule",
+          category: "debugging",
+          helpfulCount: 0,
+          harmfulCount: 0,
+          createdAt: now,
+          updatedAt: now
+        }],
+        deprecatedPatterns: []
       };
-      await writeFile(
-        path.join(env.cassMemoryDir, "playbook.jsonl"),
-        JSON.stringify(bullet)
-      );
+      await writeFile(env.playbookPath, yaml.stringify(playbook));
 
       const response = await routeRequest({
         jsonrpc: "2.0",
@@ -887,16 +905,21 @@ describe("successful tool calls", () => {
 
       expect("result" in response).toBe(true);
       if ("result" in response) {
-        expect(response.result.playbook).toBeDefined();
-        expect(response.result.cass).toBeDefined();
-        expect(Array.isArray(response.result.playbook)).toBe(true);
-        expect(Array.isArray(response.result.cass)).toBe(true);
+        // routeRequest wraps tool results in MCP content format
+        const data = JSON.parse(response.result.content[0].text);
+        expect(data.playbook).toBeDefined();
+        expect(data.cass).toBeDefined();
+        expect(Array.isArray(data.playbook)).toBe(true);
+        expect(Array.isArray(data.cass)).toBe(true);
       }
     }, "serve-search-both-scope");
   });
 
   it("memory_search with cass scope only", async () => {
     await withTempCassHome(async () => {
+      // Reset config cache so this test reads config from the fresh temp HOME
+      resetConfigCache();
+
       const response = await routeRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -909,8 +932,10 @@ describe("successful tool calls", () => {
 
       expect("result" in response).toBe(true);
       if ("result" in response) {
-        expect(response.result.cass).toBeDefined();
-        expect(response.result.playbook).toBeUndefined();
+        // routeRequest wraps tool results in MCP content format
+        const data = JSON.parse(response.result.content[0].text);
+        expect(data.cass).toBeDefined();
+        expect(data.playbook).toBeUndefined();
       }
     }, "serve-search-cass-scope");
   });

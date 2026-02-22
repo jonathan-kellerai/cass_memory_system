@@ -395,9 +395,15 @@ async function monitoredGenerateObject<T>(
   context: string,
   io: LLMIO = DEFAULT_LLM_IO
 ): Promise<LLMGenerateObjectResult<T>> {
-  const budgetCheck = await checkBudget(config);
-  if (!budgetCheck.allowed) {
-    throw new Error(`LLM budget exceeded: ${budgetCheck.reason}`);
+  // Only check budget when using the real LLM IO (not an injected mock/test IO).
+  // Test code injects a custom io object so that no real API calls are made;
+  // enforcing the budget against those synthetic calls would block unit tests
+  // in CI environments where the monthly budget has been consumed.
+  if (io === DEFAULT_LLM_IO) {
+    const budgetCheck = await checkBudget(config);
+    if (!budgetCheck.allowed) {
+      throw new Error(`LLM budget exceeded: ${budgetCheck.reason}`);
+    }
   }
 
   const result = await io.generateObject<T>({

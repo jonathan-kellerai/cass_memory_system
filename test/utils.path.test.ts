@@ -10,16 +10,18 @@ import {
 import path from "node:path";
 import os from "node:os";
 
+const effectiveHome = () => process.env.HOME ?? os.homedir();
+
 describe("Path Utilities", () => {
   describe("expandPath", () => {
     test("expands ~ to home directory", () => {
       const result = expandPath("~");
-      expect(result).toBe(os.homedir());
+      expect(result).toBe(effectiveHome());
     });
 
     test("expands ~/path to home + path", () => {
       const result = expandPath("~/docs");
-      expect(result).toBe(path.join(os.homedir(), "docs"));
+      expect(result).toBe(path.join(effectiveHome(), "docs"));
     });
 
     test("returns empty string for empty input", () => {
@@ -39,18 +41,18 @@ describe("Path Utilities", () => {
 
     test("expands tilde to home directory", () => {
       const result = normalizePlatformPath("~");
-      expect(result).toBe(os.homedir());
+      expect(result).toBe(effectiveHome());
     });
 
     test("expands ~/path correctly", () => {
       const result = normalizePlatformPath("~/docs");
-      expect(result).toContain(os.homedir());
+      expect(result).toContain(effectiveHome());
       expect(result).toContain("docs");
     });
 
     test("expands ~\\path correctly", () => {
       const result = normalizePlatformPath("~\\docs");
-      expect(result).toContain(os.homedir());
+      expect(result).toContain(effectiveHome());
     });
 
     test("resolves relative paths to absolute", () => {
@@ -213,7 +215,7 @@ describe("Path Utilities", () => {
 
     test("expands tilde in first segment", () => {
       const result = joinPath("~", "docs");
-      expect(result).toContain(os.homedir());
+      expect(result).toContain(effectiveHome());
       expect(result).toContain("docs");
     });
 
