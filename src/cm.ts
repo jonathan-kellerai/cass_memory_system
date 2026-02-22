@@ -28,6 +28,7 @@ import { onboardCommand } from "./commands/onboard.js";
 import { guardCommand } from "./commands/guard.js";
 import { traumaCommand } from "./commands/trauma.js";
 import { diaryCommand } from "./commands/diary.js";
+import { robotDocsCommand } from "./commands/robot-docs.js";
 import { infoCommand } from "./info.js";
 import { examplesCommand } from "./examples.js";
 
@@ -68,7 +69,8 @@ export function createProgram(argv: string[] = process.argv): Command {
     .option("--width <n>", "Override output width (default: terminal columns)", toInt)
     .option("--verbose", "Enable verbose diagnostics (sets CASS_MEMORY_VERBOSE=1)")
     .option("--info", "Show version, config paths, environment, and dependencies")
-    .option("--examples", "Show curated workflow examples");
+    .option("--examples", "Show curated workflow examples")
+    .option("--schema", "Emit JSON Schema for core command outputs (alias: robot-docs schemas)");
 
 // --- Init ---
 program.command("init")
@@ -564,6 +566,24 @@ program.command("quickstart")
   )
   .action(async (opts: any) => await quickstartCommand(opts));
 
+// --- Robot Docs (machine-readable CLI docs for agents) ---
+program.command("robot-docs")
+  .description("Machine-readable CLI documentation for agents (JSON only)")
+  .argument("[topic]", "guide | commands | examples | exit-codes | schemas (default: guide)")
+  .option("-j, --json", "Output JSON (always on for this command)")
+  .addHelpText("after", () =>
+    formatCommandExamples([
+      "robot-docs --json",
+      "robot-docs guide --json",
+      "robot-docs commands --json",
+      "robot-docs examples --json",
+      "robot-docs exit-codes --json",
+      "robot-docs schemas --json",
+      "--schema",
+    ])
+  )
+  .action(async (topic: string | undefined, opts: any) => await robotDocsCommand({ ...opts, topic }));
+
 // --- Privacy ---
 const privacy = program.command("privacy")
   .description("Privacy controls (cross-agent enrichment)")
@@ -932,6 +952,7 @@ export function hasJsonFlag(argv: string[] = process.argv): boolean {
     "project",
     "starters",
     "quickstart",
+    "robot-docs",
     "privacy",
     "serve",
     "outcome",
@@ -1178,10 +1199,11 @@ export function handleCliError(error: unknown, argv: string[] = process.argv, pr
 }
 
 if (import.meta.main) {
-  // Handle --info and --examples before commander parses (similar to --version)
+  // Handle --info, --examples, and --schema before commander parses (similar to --version)
   const args = process.argv.slice(2);
   const hasInfoFlag = args.includes("--info");
   const hasExamplesFlag = args.includes("--examples");
+  const hasSchemaFlag = args.includes("--schema");
   const hasJsonFlag = args.includes("--json") || args.includes("-j");
 
   if (hasInfoFlag) {
@@ -1193,6 +1215,13 @@ if (import.meta.main) {
       });
   } else if (hasExamplesFlag) {
     examplesCommand({ json: hasJsonFlag })
+      .then(() => process.exit(0))
+      .catch((err) => {
+        console.error(err);
+        process.exit(1);
+      });
+  } else if (hasSchemaFlag) {
+    robotDocsCommand({ topic: "schemas", json: true })
       .then(() => process.exit(0))
       .catch((err) => {
         console.error(err);
