@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { generateContextResult } from "./context.js";
 import { recordFeedback } from "./mark.js";
-import { recordOutcome, loadOutcomes } from "../outcome.js";
+import { recordOutcome, loadOutcomes, applyOutcomeFeedback } from "../outcome.js";
 import { loadConfig } from "../config.js";
 import { loadMergedPlaybook, getActiveBullets } from "../playbook.js";
 import { loadAllDiaries } from "../diary.js";
@@ -165,6 +165,49 @@ const TOOL_DEFS = [
         rule: { type: "string", description: "Rule text or bullet ID to validate" }
       },
       required: ["rule"]
+    }
+  },
+  {
+    name: "cm_outcome_apply",
+    description: "Apply recorded session outcomes as implicit playbook feedback",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "integer", minimum: 1, description: "Max outcomes to process (default: all pending)" }
+      }
+    }
+  },
+  {
+    name: "cm_stale",
+    description: "Find playbook rules without recent feedback",
+    inputSchema: {
+      type: "object",
+      properties: {
+        days: { type: "integer", minimum: 0, description: "Staleness threshold in days (default: 90)" },
+        scope: { type: "string", enum: ["global", "workspace", "all"], description: "Scope to search" }
+      }
+    }
+  },
+  {
+    name: "cm_why",
+    description: "Show origin evidence and reasoning for a playbook rule",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bulletId: { type: "string", description: "Bullet ID to explain" },
+        verbose: { type: "boolean", description: "Include full session context" }
+      },
+      required: ["bulletId"]
+    }
+  },
+  {
+    name: "cm_audit",
+    description: "Audit playbook health and surface anomalies",
+    inputSchema: {
+      type: "object",
+      properties: {
+        days: { type: "integer", minimum: 1, description: "Look back this many days (default: 7)" }
+      }
     }
   }
 ];
@@ -566,6 +609,46 @@ async function handleToolCall(name: string, args: any): Promise<any> {
       if (!ruleCheck.ok) throw new Error(ruleCheck.message);
       // validate is read-only (Tantivy read lock = concurrent-safe)
       const out = await runBinaryCommand(["validate", ruleCheck.value, "--json"]);
+      try {
+        return JSON.parse(out);
+      } catch {
+        return { output: out.trim() };
+      }
+    }
+    case "cm_outcome_apply": {
+      const config = await getCachedConfig();
+      const outcomes = await loadOutcomes(config);
+      const applyResult = await applyOutcomeFeedback(outcomes, config);
+      return { applied: applyResult.applied, missing: applyResult.missing, totalOutcomes: outcomes.length };
+    }
+    case "cm_stale": {
+      const cliArgs = ["stale", "--json"];
+      if (args?.days !== undefined) cliArgs.push("--days", String(args.days));
+      if (args?.scope) cliArgs.push("--scope", args.scope);
+      const out = await runBinaryCommand(cliArgs);
+      try {
+        return JSON.parse(out);
+      } catch {
+        return { output: out.trim() };
+      }
+    }
+    case "cm_why": {
+      assertArgs(args, { bulletId: "string" });
+      const idCheck = validateNonEmptyString(args?.bulletId, "bulletId", { trim: true });
+      if (!idCheck.ok) throw new Error(idCheck.message);
+      const cliArgs = ["why", idCheck.value, "--json"];
+      if (args?.verbose) cliArgs.push("--verbose");
+      const out = await runBinaryCommand(cliArgs);
+      try {
+        return JSON.parse(out);
+      } catch {
+        return { output: out.trim() };
+      }
+    }
+    case "cm_audit": {
+      const cliArgs = ["audit", "--json"];
+      if (args?.days !== undefined) cliArgs.push("--days", String(args.days));
+      const out = await runBinaryCommand(cliArgs);
       try {
         return JSON.parse(out);
       } catch {

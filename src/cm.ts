@@ -27,6 +27,7 @@ import { similarCommand } from "./commands/similar.js";
 import { onboardCommand } from "./commands/onboard.js";
 import { guardCommand } from "./commands/guard.js";
 import { traumaCommand } from "./commands/trauma.js";
+import { diaryCommand } from "./commands/diary.js";
 import { infoCommand } from "./info.js";
 import { examplesCommand } from "./examples.js";
 
@@ -876,6 +877,16 @@ trauma.command("import")
   .option("-j, --json", "Output JSON")
   .action(async (file: string, opts: any) => await traumaCommand("import", [file], opts));
 
+// --- Diary ---
+program
+  .command("diary")
+  .description("Generate a structured diary from a coding session")
+  .argument("<session>", "Path to the session JSONL file")
+  .option("--save", "Save to diary directory instead of printing")
+  .option("--raw", "Skip cass export, use raw file")
+  .option("-j, --json", "Output JSON")
+  .action(async (sessionPath: string, opts: any) => await diaryCommand(sessionPath, opts));
+
 program.showSuggestionAfterError(true);
 if (!hasJsonFlag(argv)) {
   program.showHelpAfterError("(add --help for additional information)");
@@ -926,6 +937,7 @@ export function hasJsonFlag(argv: string[] = process.argv): boolean {
     "outcome",
     "outcome-apply",
     "onboard",
+    "diary",
   ]);
 
   const command = (() => {

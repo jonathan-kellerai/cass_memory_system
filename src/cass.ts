@@ -367,13 +367,12 @@ export function cassNeedsIndex(cassPath = "cass", runner: CassRunner = DEFAULT_C
 
 export async function cassIndex(
   cassPath = "cass",
-  options: { full?: boolean; incremental?: boolean } = {},
+  options: { full?: boolean } = {},
   runner: CassRunner = DEFAULT_CASS_RUNNER
 ): Promise<void> {
   const resolved = expandPath(cassPath);
   const args = ["index"];
   if (options.full) args.push("--full");
-  if (options.incremental) args.push("--incremental");
 
   return new Promise((resolve, reject) => {
     const proc = runner.spawn(resolved, args, { stdio: "inherit" });
