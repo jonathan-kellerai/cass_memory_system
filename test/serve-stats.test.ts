@@ -6,6 +6,16 @@ import { computePlaybookStats, __test as serveTest } from "../src/commands/serve
 import { withTempCassHome } from "./helpers/temp.js";
 import { withTempGitRepo } from "./helpers/git.js";
 
+/** Unwrap MCP-compliant tool result: {"content":[{"type":"text","text":"..."}]} → parsed object */
+function getToolResult(response: any): any {
+  if (!("result" in response)) return undefined;
+  const r = response.result;
+  if (r && typeof r === "object" && Array.isArray(r.content)) {
+    try { return JSON.parse(r.content[0].text); } catch { return r; }
+  }
+  return r;
+}
+
 describe("serve module stats (unit)", () => {
   const config = createTestConfig();
 
@@ -407,8 +417,9 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result).toHaveProperty("playbook");
-            expect(Array.isArray(response.result.playbook)).toBe(true);
+            const result = getToolResult(response);
+            expect(result).toHaveProperty("playbook");
+            expect(Array.isArray(result.playbook)).toBe(true);
           }
         } finally {
           process.chdir(originalCwd);
@@ -441,10 +452,11 @@ describe("serve module tool calls", () => {
           expect("result" in response).toBe(true);
           if ("result" in response) {
             // recordFeedback returns { success, type, score, state }
-            expect(response.result.success).toBe(true);
-            expect(response.result.type).toBe("helpful");
-            expect(typeof response.result.score).toBe("number");
-            expect(response.result.state).toBeDefined();
+            const result = getToolResult(response);
+            expect(result.success).toBe(true);
+            expect(result.type).toBe("helpful");
+            expect(typeof result.score).toBe("number");
+            expect(result.state).toBeDefined();
           }
         } finally {
           process.chdir(originalCwd);
@@ -479,9 +491,10 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result.success).toBe(true);
-            expect(response.result.type).toBe("harmful");
-            expect(typeof response.result.score).toBe("number");
+            const result = getToolResult(response);
+            expect(result.success).toBe(true);
+            expect(result.type).toBe("harmful");
+            expect(typeof result.score).toBe("number");
           }
         } finally {
           process.chdir(originalCwd);
@@ -515,8 +528,9 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result.sessionId).toBe("test-session-123");
-            expect(response.result.outcome).toBe("success");
+            const result = getToolResult(response);
+            expect(result.sessionId).toBe("test-session-123");
+            expect(result.outcome).toBe("success");
           }
         } finally {
           process.chdir(originalCwd);
@@ -548,7 +562,8 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result.outcome).toBe("failure");
+            const result = getToolResult(response);
+            expect(result.outcome).toBe("failure");
           }
         } finally {
           process.chdir(originalCwd);
@@ -580,7 +595,8 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result.outcome).toBe("mixed");
+            const result = getToolResult(response);
+            expect(result.outcome).toBe("mixed");
           }
         } finally {
           process.chdir(originalCwd);
@@ -615,12 +631,13 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result).toHaveProperty("playbook");
-            expect(response.result).toHaveProperty("cass");
-            expect(Array.isArray(response.result.playbook)).toBe(true);
-            expect(Array.isArray(response.result.cass)).toBe(true);
+            const result = getToolResult(response);
+            expect(result).toHaveProperty("playbook");
+            expect(result).toHaveProperty("cass");
+            expect(Array.isArray(result.playbook)).toBe(true);
+            expect(Array.isArray(result.cass)).toBe(true);
             // Should find our bullet in playbook results
-            expect(response.result.playbook.some((b: any) => b.id === "b-auth-test")).toBe(true);
+            expect(result.playbook.some((b: any) => b.id === "b-auth-test")).toBe(true);
           }
         } finally {
           process.chdir(originalCwd);
@@ -648,9 +665,10 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result).not.toHaveProperty("playbook");
-            expect(response.result).toHaveProperty("cass");
-            expect(Array.isArray(response.result.cass)).toBe(true);
+            const result = getToolResult(response);
+            expect(result).not.toHaveProperty("playbook");
+            expect(result).toHaveProperty("cass");
+            expect(Array.isArray(result.cass)).toBe(true);
           }
         } finally {
           process.chdir(originalCwd);
@@ -699,9 +717,10 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result).toHaveProperty("sessionsProcessed");
-            expect(response.result).toHaveProperty("dryRun");
-            expect(response.result.dryRun).toBe(true);
+            const result = getToolResult(response);
+            expect(result).toHaveProperty("sessionsProcessed");
+            expect(result).toHaveProperty("dryRun");
+            expect(result.dryRun).toBe(true);
           }
         } finally {
           process.chdir(originalCwd);
@@ -732,9 +751,10 @@ describe("serve module tool calls", () => {
 
           expect("result" in response).toBe(true);
           if ("result" in response) {
-            expect(response.result).toHaveProperty("sessionsProcessed");
-            expect(response.result).toHaveProperty("deltasGenerated");
-            expect(response.result).toHaveProperty("message");
+            const result = getToolResult(response);
+            expect(result).toHaveProperty("sessionsProcessed");
+            expect(result).toHaveProperty("deltasGenerated");
+            expect(result).toHaveProperty("message");
           }
         } finally {
           process.chdir(originalCwd);
