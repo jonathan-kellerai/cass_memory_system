@@ -19,6 +19,8 @@ import {
 } from "../utils.js";
 import { analyzeScoreDistribution, getEffectiveScore, isStale } from "../scoring.js";
 import { ErrorCode, type PlaybookBullet } from "../types.js";
+import { spawn } from "node:child_process";
+import { generateSimilarResults } from "./similar.js";
 
 // Simple per-tool argument validation helper to reduce drift.
 function assertArgs(args: any, required: Record<string, string>) {
@@ -128,6 +130,42 @@ const TOOL_DEFS = [
         session: { type: "string", description: "Specific session path to reflect on" }
       }
     }
+  },
+  {
+    name: "cm_similar",
+    description: "Find playbook rules similar to a given query or bullet ID",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Text to find similar rules for" },
+        bulletId: { type: "string", description: "Bullet ID to find similar rules for" },
+        limit: { type: "integer", minimum: 1, description: "Max results to return" }
+      }
+    }
+  },
+  {
+    name: "cm_mark",
+    description: "Mark a rule helpful or harmful by bullet ID (alias for cm_feedback)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bulletId: { type: "string", description: "Bullet ID to mark" },
+        bullet_id: { type: "string", description: "Alias for bulletId (snake_case)" },
+        sentiment: { type: "string", enum: ["helpful", "harmful"], description: "Sentiment to record" },
+        reason: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "cm_validate",
+    description: "Validate a playbook rule or bullet ID for correctness",
+    inputSchema: {
+      type: "object",
+      properties: {
+        rule: { type: "string", description: "Rule text or bullet ID to validate" }
+      },
+      required: ["rule"]
+    }
   }
 ];
 
@@ -157,6 +195,34 @@ const RESOURCE_DEFS = [
     mimeType: "application/json"
   }
 ];
+
+// 30-second config cache — avoids re-reading disk on every tool call
+type CacheEntry<T> = { value: T; expiry: number };
+let _configCache: CacheEntry<any> | null = null;
+
+async function getCachedConfig(): Promise<any> {
+  const now = Date.now();
+  if (_configCache && now < _configCache.expiry) return _configCache.value;
+  const cfg = await loadConfig();
+  _configCache = { value: cfg, expiry: now + 30_000 };
+  return cfg;
+}
+
+// Spawn cm binary for commands that require it (read-only — no Tantivy write lock)
+function runBinaryCommand(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const cmBin = process.env.CM_BIN ?? "cm";
+    const child = spawn(cmBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    child.stdout.on("data", (d: Buffer) => chunks.push(d));
+    child.on("close", (code) => {
+      const out = Buffer.concat(chunks).toString("utf-8");
+      if (code !== 0) reject(new Error(`cm ${args[0]} exited with code ${code}`));
+      else resolve(out);
+    });
+    child.on("error", reject);
+  });
+}
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5MB guard to avoid runaway payloads
 const MCP_HTTP_TOKEN_ENV = "MCP_HTTP_TOKEN";
@@ -305,7 +371,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
           : undefined;
       const durationSec = validatePositiveInt(args?.durationSec, "durationSec", { min: 0, allowUndefined: true });
       if (!durationSec.ok) throw new Error(durationSec.message);
-      const config = await loadConfig();
+      const config = await getCachedConfig();
       return recordOutcome({
         sessionId: args?.sessionId,
         outcome: args.outcome,
@@ -341,7 +407,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
       const workspaceCheck = validateNonEmptyString(args?.workspace, "workspace", { allowUndefined: true });
       if (!workspaceCheck.ok) throw new Error(workspaceCheck.message);
       const workspace = workspaceCheck.value;
-      const config = await loadConfig();
+      const config = await getCachedConfig();
 
       const result: { playbook?: any[]; cass?: any[] } = {};
       const q = queryCheck.value.toLowerCase();
@@ -383,7 +449,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
     }
     case "memory_reflect": {
       const t0 = performance.now();
-      const config = await loadConfig();
+      const config = await getCachedConfig();
 
       const daysCheck = validatePositiveInt(args?.days, "days", { min: 1, allowUndefined: true });
       if (!daysCheck.ok) throw new Error(daysCheck.message);
@@ -466,6 +532,46 @@ async function handleToolCall(name: string, args: any): Promise<any> {
           : "No new insights found"
       };
     }
+    case "cm_similar": {
+      const queryOrId = args?.query ?? args?.bulletId;
+      if (!queryOrId || typeof queryOrId !== "string") {
+        throw new Error("cm_similar requires 'query' or 'bulletId'");
+      }
+      const limitCheck = validatePositiveInt(args?.limit, "limit", { min: 1, allowUndefined: true });
+      if (!limitCheck.ok) throw new Error(limitCheck.message);
+      const results = await generateSimilarResults(queryOrId, { limit: limitCheck.value, json: true });
+      return results;
+    }
+    case "cm_mark": {
+      // Accept both camelCase and snake_case bullet ID for schema compatibility
+      const id = args?.bulletId ?? args?.bullet_id;
+      if (!id || typeof id !== "string") {
+        throw new Error("cm_mark requires 'bulletId' or 'bullet_id'");
+      }
+      const sentiment = args?.sentiment;
+      if (sentiment !== "helpful" && sentiment !== "harmful") {
+        throw new Error("cm_mark requires sentiment: 'helpful' | 'harmful'");
+      }
+      const reason = typeof args?.reason === "string" ? args.reason : undefined;
+      const result = await recordFeedback(id, {
+        helpful: sentiment === "helpful",
+        harmful: sentiment === "harmful",
+        reason,
+      });
+      return { success: true, ...result };
+    }
+    case "cm_validate": {
+      assertArgs(args, { rule: "string" });
+      const ruleCheck = validateNonEmptyString(args?.rule, "rule", { trim: true });
+      if (!ruleCheck.ok) throw new Error(ruleCheck.message);
+      // validate is read-only (Tantivy read lock = concurrent-safe)
+      const out = await runBinaryCommand(["validate", ruleCheck.value, "--json"]);
+      try {
+        return JSON.parse(out);
+      } catch {
+        return { output: out.trim() };
+      }
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -476,7 +582,7 @@ function buildError(id: string | number | null, message: string, code = -32000, 
 }
 
 async function handleResourceRead(uri: string): Promise<any> {
-  const config = await loadConfig();
+  const config = await getCachedConfig();
   switch (uri) {
     case "cm://playbook": {
       const playbook = await loadMergedPlaybook(config);
@@ -502,6 +608,23 @@ async function handleResourceRead(uri: string): Promise<any> {
 }
 
 async function routeRequest(body: JsonRpcRequest): Promise<JsonRpcResponse> {
+  if (body.method === "initialize") {
+    return {
+      jsonrpc: "2.0",
+      id: body.id ?? null,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {}, resources: {} },
+        serverInfo: { name: "cass-memory", version: "0.3.0" }
+      }
+    };
+  }
+
+  if (body.method === "notifications/initialized") {
+    // Notification — no response expected (id is null per spec)
+    return { jsonrpc: "2.0", id: null, result: {} };
+  }
+
   if (body.method === "tools/list") {
     return { jsonrpc: "2.0", id: body.id ?? null, result: { tools: TOOL_DEFS } };
   }
@@ -692,6 +815,19 @@ export async function serveCommand(options: { port?: number; host?: string } = {
     server.listen(port, host, () => resolve());
     server.on("error", reject);
   });
+
+  // Graceful shutdown — allow launchd / Archangel ServerManager to restart cleanly
+  const shutdown = (signal: string) => {
+    log(`Received ${signal}, shutting down gracefully...`, true);
+    server.close(() => {
+      log("MCP HTTP server closed.", true);
+      process.exit(0);
+    });
+    // Force exit if server does not close within 5s
+    setTimeout(() => process.exit(1), 5000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 
   const baseUrl = `http://${host}:${port}`;
   log(`MCP HTTP server listening on ${baseUrl}`, true);
