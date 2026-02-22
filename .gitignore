@@ -51,6 +51,7 @@ Thumbs.db
 
 # Bun
 bun.lockb
+*.bun-build
 
 # CASS memory system (local/ephemeral)
 .cass/config.yaml

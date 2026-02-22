@@ -1,0 +1,46 @@
+diff --git a/src/backends/onnx.js b/src/backends/onnx.js
+index 0bee3dce7184d1fec1bd0e75677a6fea3a47db30..74f01735a0a181ece8557c084ac37f20adc4d31e 100644
+--- a/src/backends/onnx.js
++++ b/src/backends/onnx.js
+@@ -18,8 +18,11 @@
+ 
+ // NOTE: Import order matters here. We need to import `onnxruntime-node` before `onnxruntime-web`.
+ // In either case, we select the default export if it exists, otherwise we use the named export.
++//
++// PATCH (bun-compiled-binary): onnxruntime-web static import removed. Bun compiled binaries
++// run with process.release.name === 'bun' (not 'node'), but still use onnxruntime-node.
++// The original static import of onnxruntime-web caused runtime failures in $bunfs.
+ import * as ONNX_NODE from 'onnxruntime-node';
+-import * as ONNX_WEB from 'onnxruntime-web';
+ 
+ /** @type {import('onnxruntime-web')} The ONNX runtime module. */
+ export let ONNX;
+@@ -29,22 +32,16 @@ export const executionProviders = [
+     'wasm'
+ ];
+ 
+-if (typeof process !== 'undefined' && process?.release?.name === 'node') {
+-    // Running in a node-like environment.
++if (typeof process !== 'undefined' && process?.release?.name != null) {
++    // Running in a node-like environment (node or bun compiled binary).
+     ONNX = ONNX_NODE.default ?? ONNX_NODE;
+ 
+     // Add `cpu` execution provider, with higher precedence that `wasm`.
+     executionProviders.unshift('cpu');
+ 
+ } else {
+-    // Running in a browser-environment
+-    ONNX = ONNX_WEB.default ?? ONNX_WEB;
+-
+-    // SIMD for WebAssembly does not operate correctly in some recent versions of iOS (16.4.x).
+-    // As a temporary fix, we disable it for now.
+-    // For more information, see: https://github.com/microsoft/onnxruntime/issues/15644
+-    const isIOS = typeof navigator !== 'undefined' && /iP(hone|od|ad).+16_4.+AppleWebKit/.test(navigator.userAgent);
+-    if (isIOS) {
+-        ONNX.env.wasm.simd = false;
+-    }
++    // Running in a browser-environment — onnxruntime-web not bundled in this build.
++    throw new Error(
++        'onnxruntime-web is not bundled in this build. Use the npm package in a browser environment.'
++    );
+ }
