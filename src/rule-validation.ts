@@ -67,6 +67,38 @@ export interface ValidateRuleOptions {
   model?: string;
 }
 
+/** Stop-words to exclude from keyword similarity (too common to be meaningful) */
+const STOP_WORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+  "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+  "being", "have", "has", "had", "do", "does", "did", "will", "would",
+  "shall", "should", "may", "might", "can", "could", "not", "this", "that",
+  "it", "its", "they", "them", "their", "you", "your", "we", "our"
+]);
+
+/**
+ * Compute Jaccard similarity between two texts using word tokens.
+ * Returns a value in [0, 1] where 1 means identical token sets.
+ */
+function keywordSimilarity(a: string, b: string): number {
+  const tokenize = (text: string): Set<string> => {
+    const words = text.toLowerCase().split(/\W+/).filter(
+      w => w.length > 2 && !STOP_WORDS.has(w)
+    );
+    return new Set(words);
+  };
+  const setA = tokenize(a);
+  const setB = tokenize(b);
+  if (setA.size === 0 && setB.size === 0) return 1;
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) intersection++;
+  }
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
 /** Context words that indicate specific applicability */
 const CONTEXT_WORDS = ["when", "if", "before", "after", "always", "never", "only", "unless", "during", "while"];
 
@@ -226,6 +258,7 @@ export async function validateRule(
     const activeBullets = getActiveBullets(playbook);
 
     if (activeBullets.length > 0) {
+      let semanticChecked = false;
       try {
         const similar = await findSimilarBulletsSemantic(
           content,
@@ -235,6 +268,7 @@ export async function validateRule(
         );
 
         if (similar.length > 0 && similar[0].similarity >= threshold) {
+          semanticChecked = true;
           const match = similar[0];
           warnings.push({
             type: "similarity",
@@ -245,9 +279,33 @@ export async function validateRule(
               similarityScore: match.similarity,
             },
           });
+        } else if (similar.length > 0) {
+          // Semantic search ran but found no match above threshold
+          semanticChecked = true;
         }
       } catch {
-        // Semantic search may fail offline; continue with other checks
+        // Semantic search may fail offline; fall back to keyword similarity below
+      }
+
+      // Keyword-based fallback: run when semantic search was unavailable (embeddings
+      // not cached / model not downloaded).  Uses Jaccard overlap on meaningful tokens,
+      // which reliably catches near-duplicate phrasings without requiring a model.
+      if (!semanticChecked) {
+        for (const bullet of activeBullets) {
+          const kwSim = keywordSimilarity(content, bullet.content);
+          if (kwSim >= threshold) {
+            warnings.push({
+              type: "similarity",
+              message: `Similar to existing rule '${bullet.id}' (${(kwSim * 100).toFixed(0)}% keyword overlap)`,
+              severity: "warning",
+              details: {
+                similarRuleId: bullet.id,
+                similarityScore: kwSim,
+              },
+            });
+            break; // Only report the first match
+          }
+        }
       }
     }
   }
