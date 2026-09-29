@@ -376,6 +376,134 @@ describe("getModel", () => {
     }) as any;
     expect(model.supportsStructuredOutputs).toBe(false);
   });
+
+  // reasoningEffort is an @ai-sdk/openai model setting (sent as
+  // `reasoning_effort`), so it must land on the model's settings.
+  it("reasoningEffort reaches the openai model settings", () => {
+    const model = getModel({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+      baseUrl: "https://api.x.ai/v1",
+      reasoningEffort: "low",
+    }) as any;
+    expect(model.settings.reasoningEffort).toBe("low");
+  });
+
+  it("passes xhigh through unchanged", () => {
+    const model = getModel({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+      reasoningEffort: "xhigh",
+    }) as any;
+    expect(model.settings.reasoningEffort).toBe("xhigh");
+  });
+
+  it("sets no reasoningEffort when the field is absent", () => {
+    const model = getModel({ provider: "openai", model: "grok-4.7", apiKey: "sk-test-key" }) as any;
+    expect(model.settings.reasoningEffort).toBeUndefined();
+    expect("reasoningEffort" in model.settings).toBe(false);
+  });
+
+  it("keeps disableStructuredOutputs alongside reasoningEffort", () => {
+    const model = getModel({
+      provider: "openai",
+      model: "o3",
+      apiKey: "sk-test-key",
+      disableStructuredOutputs: true,
+      reasoningEffort: "high",
+    }) as any;
+    expect(model.supportsStructuredOutputs).toBe(false);
+    expect(model.settings.reasoningEffort).toBe("high");
+  });
+});
+
+// ============================================================================
+// Config.reasoningEffort -> model settings plumbing
+// (llmWithFallback builds a real model even with an injected LLMIO, so the
+// model handed to generateObject shows exactly what would be sent.)
+// ============================================================================
+
+describe("reasoningEffort config plumbing", () => {
+  const schema = z.object({ test: z.string() });
+
+  function capturingIO(captured: { options: any }): LLMIO {
+    return {
+      generateObject: async <T>(options: any) => {
+        captured.options = options;
+        return { object: { test: "ok" } as T };
+      },
+    };
+  }
+
+  beforeEach(() => {
+    saveEnv();
+    clearAllApiKeys();
+    __resetAutoFallbackNoticeForTest();
+  });
+  afterEach(() => restoreEnv());
+
+  it("llmWithFallback passes config.reasoningEffort to the openai model", async () => {
+    const captured: { options: any } = { options: null };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+      baseUrl: "https://api.x.ai/v1",
+      reasoningEffort: "low",
+    });
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    expect(captured.options.model.modelId).toBe("grok-4.7");
+    expect(captured.options.model.settings.reasoningEffort).toBe("low");
+  });
+
+  it("llmWithFallback sends no reasoningEffort when the config omits it", async () => {
+    const captured: { options: any } = { options: null };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+    });
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    expect(captured.options.model.settings.reasoningEffort).toBeUndefined();
+  });
+
+  it("llmWithFallback drops reasoningEffort on a fallback hop to another model", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const captured: { options: any } = { options: null };
+    // anthropic has no key, so the only provider tried is the openai fallback.
+    const config = createTestConfig({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      reasoningEffort: "low",
+    });
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    expect(captured.options.model.modelId).toBe("gpt-4o-mini");
+    expect(captured.options.model.settings.reasoningEffort).toBeUndefined();
+  });
+
+  it("resolveEffectiveLLMConfig drops reasoningEffort when it reroutes", () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const config = createTestConfig({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      reasoningEffort: "low",
+    });
+    const resolved = resolveEffectiveLLMConfig(config);
+    expect(resolved.provider).toBe("openai");
+    expect(resolved.reasoningEffort).toBeUndefined();
+  });
+
+  it("resolveEffectiveLLMConfig keeps reasoningEffort when not rerouting", () => {
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+      reasoningEffort: "low",
+    });
+    expect(resolveEffectiveLLMConfig(config).reasoningEffort).toBe("low");
+  });
 });
 
 // ============================================================================

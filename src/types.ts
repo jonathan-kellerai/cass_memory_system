@@ -505,6 +505,10 @@ export const ConfigSchema = z.object({
   jsonOutput: z.boolean().default(false),
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
+  // Reasoning effort for the openai provider (incl. OpenAI-compatible gateways
+  // such as xAI). Sent as `reasoning_effort`; unset means the field is omitted
+  // and the provider's own default applies. Ignored by other providers.
+  reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
   ollamaBaseUrl: z.string().default("http://localhost:11434"),
   // Opt-in escape hatch for OpenAI strict structured-outputs mode.
   // The reflect/audit/validate Zod schemas are written to be strict-compliant

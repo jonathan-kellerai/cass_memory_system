@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { checkBudget, getUsageStats, recordCost } from "../src/cost.js";
+import { checkBudget, estimateCost, getUsageStats, recordCost } from "../src/cost.js";
 import { now } from "../src/utils.js";
 import { createTestConfig } from "./helpers/index.js";
 
@@ -180,5 +180,16 @@ describe("Cost Tracking & Optimization", () => {
       const result = await checkBudget(config);
       expect(result.allowed).toBe(true);
     });
+  });
+});
+
+describe("estimateCost model rates", () => {
+  it("prices grok-4.7 at its own rate, not the fallback", () => {
+    // $2.00 in / $6.00 out per 1M tokens
+    expect(estimateCost("grok-4.7", 1_000_000, 1_000_000)).toBeCloseTo(8.0, 6);
+  });
+
+  it("uses the {5,15} fallback for an unknown model id", () => {
+    expect(estimateCost("grok-unknown-model", 1_000_000, 1_000_000)).toBeCloseTo(20.0, 6);
   });
 });

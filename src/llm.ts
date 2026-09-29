@@ -5,7 +5,7 @@
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAI, type OpenAIProvider } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
 import { createOllama } from "ollama-ai-provider";
 import { z } from "zod";
@@ -52,6 +52,8 @@ export interface LLMConfig {
   ollamaBaseUrl?: string;
   /** #47 escape hatch: disable strict structured outputs for openai-compatible gateways. */
   disableStructuredOutputs?: boolean;
+  /** openai provider only: sent as `reasoning_effort`; omitted when unset. */
+  reasoningEffort?: Config["reasoningEffort"];
 }
 
 /**
@@ -170,6 +172,7 @@ export function getModel(config: {
   baseUrl?: string;
   ollamaBaseUrl?: string;
   disableStructuredOutputs?: boolean;
+  reasoningEffort?: Config["reasoningEffort"];
 }): LanguageModel {
   const provider = config.provider as LLMProvider;
 
@@ -225,9 +228,18 @@ export function getModel(config: {
         apiKey,
         ...(baseURL ? { baseURL } : {}),
       });
-      return config.disableStructuredOutputs
-        ? openaiProvider(config.model, { structuredOutputs: false })
-        : openaiProvider(config.model);
+      //
+      // `reasoningEffort` is likewise a model setting, sent as
+      // `reasoning_effort` and omitted entirely when unset. The SDK types it as
+      // 'low' | 'medium' | 'high', but passes the string through unchanged at
+      // runtime, so "xhigh" needs only the cast below.
+      const settings: NonNullable<Parameters<OpenAIProvider["chat"]>[1]> = {
+        ...(config.disableStructuredOutputs ? { structuredOutputs: false } : {}),
+        ...(config.reasoningEffort
+          ? { reasoningEffort: config.reasoningEffort as "low" | "medium" | "high" }
+          : {}),
+      };
+      return openaiProvider(config.model, settings);
     }
     case "anthropic":
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) })(config.model);
@@ -969,7 +981,13 @@ export function resolveEffectiveLLMConfig(config: Config): Config {
         `[LLM] Provider '${provider}' is not configured — auto-falling back to ${target}. Configure ${envVar} to use '${provider}' directly.`,
       );
     }
-    return { ...config, provider: fallback, model: FALLBACK_MODELS[fallback] };
+    // reasoningEffort was tuned for the configured model, not the fallback one.
+    return {
+      ...config,
+      provider: fallback,
+      model: FALLBACK_MODELS[fallback],
+      reasoningEffort: undefined,
+    };
   }
   // Nothing usable — return unchanged and let the normal error surface.
   return config;
@@ -1029,6 +1047,7 @@ export async function generateObjectSafe<T>(
       // strict json_schema / forced tool_choice still reached gateways that
       // reject them (see PR #59).
       disableStructuredOutputs: config.disableStructuredOutputs,
+      reasoningEffort: config.reasoningEffort,
     };
     model = getModel(llmConfig);
   }
@@ -1514,6 +1533,8 @@ export async function llmWithFallback<T>(
         baseUrl: config.baseUrl,
         ollamaBaseUrl: config.ollamaBaseUrl,
         disableStructuredOutputs: config.disableStructuredOutputs,
+        // Tuned for the configured model; a fallback hop runs a different model.
+        reasoningEffort: provider === primaryProvider ? config.reasoningEffort : undefined,
       });
       const costConfig: Config = { ...config, provider, model, apiKey };
 
