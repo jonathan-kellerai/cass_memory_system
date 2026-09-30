@@ -15,9 +15,11 @@ import {
   llmWithRetry,
   objectGenerationOverrides,
   PROMPTS,
+  resolveConfiguredApiKey,
   resolveEffectiveLLMConfig,
   validateApiKey,
 } from "../src/llm.js";
+import { ConfigSchema } from "../src/types.js";
 import { truncateForContext } from "../src/utils.js";
 import { createTestConfig } from "./helpers/factories.js";
 
@@ -503,6 +505,154 @@ describe("reasoningEffort config plumbing", () => {
       reasoningEffort: "low",
     });
     expect(resolveEffectiveLLMConfig(config).reasoningEffort).toBe("low");
+  });
+});
+
+// ============================================================================
+// Config.apiKeyEnv -> which env var supplies the configured provider's key
+// (the key a real request would carry is read back from the model's own
+// header builder, so these assert what would be sent, not an intermediate.)
+// ============================================================================
+
+describe("apiKeyEnv config", () => {
+  const schema = z.object({ test: z.string() });
+  const XAI_DUMMY = "dummy-xai-AAAA";
+  const OPENAI_DUMMY = "dummy-openai-BBBB";
+  const ANTHROPIC_DUMMY = "dummy-anthropic-CCCC";
+  let savedXai: string | undefined;
+
+  function capturingIO(captured: { options: any }): LLMIO {
+    return {
+      generateObject: async <T>(options: any) => {
+        captured.options = options;
+        return { object: { test: "ok" } as T };
+      },
+    };
+  }
+
+  function sentHeaders(model: any): Record<string, string | undefined> {
+    return model.config.headers();
+  }
+
+  beforeEach(() => {
+    saveEnv();
+    savedXai = process.env.XAI_API_KEY;
+    clearAllApiKeys();
+    delete process.env.XAI_API_KEY;
+    __resetAutoFallbackNoticeForTest();
+  });
+  afterEach(() => {
+    restoreEnv();
+    if (savedXai === undefined) delete process.env.XAI_API_KEY;
+    else process.env.XAI_API_KEY = savedXai;
+  });
+
+  it("schema accepts an env var name and rejects anything else", () => {
+    expect(ConfigSchema.safeParse({ apiKeyEnv: "XAI_API_KEY" }).success).toBe(true);
+    expect(ConfigSchema.safeParse({ apiKeyEnv: "$XAI_API_KEY" }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ apiKeyEnv: "xai key" }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ apiKeyEnv: "1KEY" }).success).toBe(false);
+    expect(ConfigSchema.parse({}).apiKeyEnv).toBeUndefined();
+  });
+
+  it("apiKeyEnv set: the key comes from that var, not OPENAI_API_KEY", async () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    process.env.OPENAI_API_KEY = OPENAI_DUMMY;
+    const captured: { options: any } = { options: null };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      baseUrl: "https://api.x.ai/v1",
+      apiKeyEnv: "XAI_API_KEY",
+    });
+    expect(resolveConfiguredApiKey(config)).toBe(XAI_DUMMY);
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    const auth = sentHeaders(captured.options.model).Authorization;
+    expect(auth).toBe(`Bearer ${XAI_DUMMY}`);
+    expect(auth).not.toContain(OPENAI_DUMMY);
+  });
+
+  // Planted negative: without apiKeyEnv the provider default is used, as before.
+  it("apiKeyEnv unset: OPENAI_API_KEY is used (unchanged behavior)", async () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    process.env.OPENAI_API_KEY = OPENAI_DUMMY;
+    const captured: { options: any } = { options: null };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      baseUrl: "https://api.x.ai/v1",
+    });
+    expect(resolveConfiguredApiKey(config)).toBeUndefined();
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    expect(sentHeaders(captured.options.model).Authorization).toBe(`Bearer ${OPENAI_DUMMY}`);
+  });
+
+  it("apiKey still wins over apiKeyEnv", () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    const config = createTestConfig({ apiKey: "explicit-key", apiKeyEnv: "XAI_API_KEY" });
+    expect(resolveConfiguredApiKey(config)).toBe("explicit-key");
+  });
+
+  it("apiKeyEnv set but the var is empty: clear error, no OPENAI_API_KEY fallback", async () => {
+    process.env.OPENAI_API_KEY = OPENAI_DUMMY;
+    process.env.XAI_API_KEY = "  ";
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      baseUrl: "https://api.x.ai/v1",
+      apiKeyEnv: "XAI_API_KEY",
+    });
+    const expected = /XAI_API_KEY environment variable not found \(named by config apiKeyEnv\)/;
+    expect(() => resolveConfiguredApiKey(config)).toThrow(expected);
+    // generateObjectSafe's first step on the real path; must not reroute.
+    expect(() => resolveEffectiveLLMConfig(config)).toThrow(expected);
+
+    delete process.env.XAI_API_KEY;
+    const captured: { options: any } = { options: null };
+    await expect(llmWithFallback(schema, "prompt", config, capturingIO(captured))).rejects.toThrow(
+      expected,
+    );
+    expect(captured.options).toBeNull();
+  });
+
+  it("apiKeyEnv var set with OPENAI_API_KEY unset: openai is not rerouted", () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    process.env.ANTHROPIC_API_KEY = ANTHROPIC_DUMMY;
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKeyEnv: "XAI_API_KEY",
+    });
+    const resolved = resolveEffectiveLLMConfig(config);
+    expect(resolved.provider).toBe("openai");
+    expect(resolved.apiKeyEnv).toBe("XAI_API_KEY");
+  });
+
+  it("a fallback hop to another provider uses its own key, not the apiKeyEnv one", async () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    process.env.ANTHROPIC_API_KEY = ANTHROPIC_DUMMY;
+    const seen: any[] = [];
+    const io: LLMIO = {
+      generateObject: async <T>(options: any) => {
+        seen.push(options.model);
+        if (String(options.model.provider).startsWith("openai")) {
+          throw new Error("primary down");
+        }
+        return { object: { test: "ok" } as T };
+      },
+    };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKeyEnv: "XAI_API_KEY",
+    });
+    await llmWithFallback(schema, "prompt", config, io);
+    expect(seen).toHaveLength(2);
+    expect(sentHeaders(seen[0]).Authorization).toBe(`Bearer ${XAI_DUMMY}`);
+    const fallbackHeaders = sentHeaders(seen[1]);
+    expect(String(seen[1].provider)).toStartWith("anthropic");
+    expect(fallbackHeaders["x-api-key"]).toBe(ANTHROPIC_DUMMY);
+    expect(JSON.stringify(fallbackHeaders)).not.toContain(XAI_DUMMY);
   });
 });
 
