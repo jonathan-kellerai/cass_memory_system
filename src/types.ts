@@ -504,7 +504,21 @@ export const ConfigSchema = z.object({
   verbose: z.boolean().default(false),
   jsonOutput: z.boolean().default(false),
   apiKey: z.string().optional(),
+  // Name of the env var that holds the configured provider's API key, e.g.
+  // "XAI_API_KEY" when `baseUrl` points the openai provider at xAI. When set,
+  // it replaces the provider default (OPENAI_API_KEY etc.) for the configured
+  // provider only; fallback providers keep their own default vars. An empty
+  // or missing var is an error, never a silent fall-back to the default var.
+  // An explicit `apiKey` still wins.
+  apiKeyEnv: z
+    .string()
+    .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "apiKeyEnv must be an environment variable name")
+    .optional(),
   baseUrl: z.string().optional(),
+  // Reasoning effort for the openai provider (incl. OpenAI-compatible gateways
+  // such as xAI). Sent as `reasoning_effort`; unset means the field is omitted
+  // and the provider's own default applies. Ignored by other providers.
+  reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
   ollamaBaseUrl: z.string().default("http://localhost:11434"),
   // Opt-in escape hatch for OpenAI strict structured-outputs mode.
   // The reflect/audit/validate Zod schemas are written to be strict-compliant

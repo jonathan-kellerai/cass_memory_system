@@ -15,9 +15,11 @@ import {
   llmWithRetry,
   objectGenerationOverrides,
   PROMPTS,
+  resolveConfiguredApiKey,
   resolveEffectiveLLMConfig,
   validateApiKey,
 } from "../src/llm.js";
+import { ConfigSchema } from "../src/types.js";
 import { truncateForContext } from "../src/utils.js";
 import { createTestConfig } from "./helpers/factories.js";
 
@@ -375,6 +377,282 @@ describe("getModel", () => {
       disableStructuredOutputs: true,
     }) as any;
     expect(model.supportsStructuredOutputs).toBe(false);
+  });
+
+  // reasoningEffort is an @ai-sdk/openai model setting (sent as
+  // `reasoning_effort`), so it must land on the model's settings.
+  it("reasoningEffort reaches the openai model settings", () => {
+    const model = getModel({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+      baseUrl: "https://api.x.ai/v1",
+      reasoningEffort: "low",
+    }) as any;
+    expect(model.settings.reasoningEffort).toBe("low");
+  });
+
+  it("passes xhigh through unchanged", () => {
+    const model = getModel({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+      reasoningEffort: "xhigh",
+    }) as any;
+    expect(model.settings.reasoningEffort).toBe("xhigh");
+  });
+
+  it("sets no reasoningEffort when the field is absent", () => {
+    const model = getModel({ provider: "openai", model: "grok-4.7", apiKey: "sk-test-key" }) as any;
+    expect(model.settings.reasoningEffort).toBeUndefined();
+    expect("reasoningEffort" in model.settings).toBe(false);
+  });
+
+  it("keeps disableStructuredOutputs alongside reasoningEffort", () => {
+    const model = getModel({
+      provider: "openai",
+      model: "o3",
+      apiKey: "sk-test-key",
+      disableStructuredOutputs: true,
+      reasoningEffort: "high",
+    }) as any;
+    expect(model.supportsStructuredOutputs).toBe(false);
+    expect(model.settings.reasoningEffort).toBe("high");
+  });
+});
+
+// ============================================================================
+// Config.reasoningEffort -> model settings plumbing
+// (llmWithFallback builds a real model even with an injected LLMIO, so the
+// model handed to generateObject shows exactly what would be sent.)
+// ============================================================================
+
+describe("reasoningEffort config plumbing", () => {
+  const schema = z.object({ test: z.string() });
+
+  function capturingIO(captured: { options: any }): LLMIO {
+    return {
+      generateObject: async <T>(options: any) => {
+        captured.options = options;
+        return { object: { test: "ok" } as T };
+      },
+    };
+  }
+
+  beforeEach(() => {
+    saveEnv();
+    clearAllApiKeys();
+    __resetAutoFallbackNoticeForTest();
+  });
+  afterEach(() => restoreEnv());
+
+  it("llmWithFallback passes config.reasoningEffort to the openai model", async () => {
+    const captured: { options: any } = { options: null };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+      baseUrl: "https://api.x.ai/v1",
+      reasoningEffort: "low",
+    });
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    expect(captured.options.model.modelId).toBe("grok-4.7");
+    expect(captured.options.model.settings.reasoningEffort).toBe("low");
+  });
+
+  it("llmWithFallback sends no reasoningEffort when the config omits it", async () => {
+    const captured: { options: any } = { options: null };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+    });
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    expect(captured.options.model.settings.reasoningEffort).toBeUndefined();
+  });
+
+  it("llmWithFallback drops reasoningEffort on a fallback hop to another model", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const captured: { options: any } = { options: null };
+    // anthropic has no key, so the only provider tried is the openai fallback.
+    const config = createTestConfig({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      reasoningEffort: "low",
+    });
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    expect(captured.options.model.modelId).toBe("gpt-4o-mini");
+    expect(captured.options.model.settings.reasoningEffort).toBeUndefined();
+  });
+
+  it("resolveEffectiveLLMConfig drops reasoningEffort when it reroutes", () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const config = createTestConfig({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      reasoningEffort: "low",
+    });
+    const resolved = resolveEffectiveLLMConfig(config);
+    expect(resolved.provider).toBe("openai");
+    expect(resolved.reasoningEffort).toBeUndefined();
+  });
+
+  it("resolveEffectiveLLMConfig keeps reasoningEffort when not rerouting", () => {
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKey: "sk-test-key",
+      reasoningEffort: "low",
+    });
+    expect(resolveEffectiveLLMConfig(config).reasoningEffort).toBe("low");
+  });
+});
+
+// ============================================================================
+// Config.apiKeyEnv -> which env var supplies the configured provider's key
+// (the key a real request would carry is read back from the model's own
+// header builder, so these assert what would be sent, not an intermediate.)
+// ============================================================================
+
+describe("apiKeyEnv config", () => {
+  const schema = z.object({ test: z.string() });
+  const XAI_DUMMY = "dummy-xai-AAAA";
+  const OPENAI_DUMMY = "dummy-openai-BBBB";
+  const ANTHROPIC_DUMMY = "dummy-anthropic-CCCC";
+  let savedXai: string | undefined;
+
+  function capturingIO(captured: { options: any }): LLMIO {
+    return {
+      generateObject: async <T>(options: any) => {
+        captured.options = options;
+        return { object: { test: "ok" } as T };
+      },
+    };
+  }
+
+  function sentHeaders(model: any): Record<string, string | undefined> {
+    return model.config.headers();
+  }
+
+  beforeEach(() => {
+    saveEnv();
+    savedXai = process.env.XAI_API_KEY;
+    clearAllApiKeys();
+    delete process.env.XAI_API_KEY;
+    __resetAutoFallbackNoticeForTest();
+  });
+  afterEach(() => {
+    restoreEnv();
+    if (savedXai === undefined) delete process.env.XAI_API_KEY;
+    else process.env.XAI_API_KEY = savedXai;
+  });
+
+  it("schema accepts an env var name and rejects anything else", () => {
+    expect(ConfigSchema.safeParse({ apiKeyEnv: "XAI_API_KEY" }).success).toBe(true);
+    expect(ConfigSchema.safeParse({ apiKeyEnv: "$XAI_API_KEY" }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ apiKeyEnv: "xai key" }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ apiKeyEnv: "1KEY" }).success).toBe(false);
+    expect(ConfigSchema.parse({}).apiKeyEnv).toBeUndefined();
+  });
+
+  it("apiKeyEnv set: the key comes from that var, not OPENAI_API_KEY", async () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    process.env.OPENAI_API_KEY = OPENAI_DUMMY;
+    const captured: { options: any } = { options: null };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      baseUrl: "https://api.x.ai/v1",
+      apiKeyEnv: "XAI_API_KEY",
+    });
+    expect(resolveConfiguredApiKey(config)).toBe(XAI_DUMMY);
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    const auth = sentHeaders(captured.options.model).Authorization;
+    expect(auth).toBe(`Bearer ${XAI_DUMMY}`);
+    expect(auth).not.toContain(OPENAI_DUMMY);
+  });
+
+  // Planted negative: without apiKeyEnv the provider default is used, as before.
+  it("apiKeyEnv unset: OPENAI_API_KEY is used (unchanged behavior)", async () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    process.env.OPENAI_API_KEY = OPENAI_DUMMY;
+    const captured: { options: any } = { options: null };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      baseUrl: "https://api.x.ai/v1",
+    });
+    expect(resolveConfiguredApiKey(config)).toBeUndefined();
+    await llmWithFallback(schema, "prompt", config, capturingIO(captured));
+    expect(sentHeaders(captured.options.model).Authorization).toBe(`Bearer ${OPENAI_DUMMY}`);
+  });
+
+  it("apiKey still wins over apiKeyEnv", () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    const config = createTestConfig({ apiKey: "explicit-key", apiKeyEnv: "XAI_API_KEY" });
+    expect(resolveConfiguredApiKey(config)).toBe("explicit-key");
+  });
+
+  it("apiKeyEnv set but the var is empty: clear error, no OPENAI_API_KEY fallback", async () => {
+    process.env.OPENAI_API_KEY = OPENAI_DUMMY;
+    process.env.XAI_API_KEY = "  ";
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      baseUrl: "https://api.x.ai/v1",
+      apiKeyEnv: "XAI_API_KEY",
+    });
+    const expected = /XAI_API_KEY environment variable not found \(named by config apiKeyEnv\)/;
+    expect(() => resolveConfiguredApiKey(config)).toThrow(expected);
+    // generateObjectSafe's first step on the real path; must not reroute.
+    expect(() => resolveEffectiveLLMConfig(config)).toThrow(expected);
+
+    delete process.env.XAI_API_KEY;
+    const captured: { options: any } = { options: null };
+    await expect(llmWithFallback(schema, "prompt", config, capturingIO(captured))).rejects.toThrow(
+      expected,
+    );
+    expect(captured.options).toBeNull();
+  });
+
+  it("apiKeyEnv var set with OPENAI_API_KEY unset: openai is not rerouted", () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    process.env.ANTHROPIC_API_KEY = ANTHROPIC_DUMMY;
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKeyEnv: "XAI_API_KEY",
+    });
+    const resolved = resolveEffectiveLLMConfig(config);
+    expect(resolved.provider).toBe("openai");
+    expect(resolved.apiKeyEnv).toBe("XAI_API_KEY");
+  });
+
+  it("a fallback hop to another provider uses its own key, not the apiKeyEnv one", async () => {
+    process.env.XAI_API_KEY = XAI_DUMMY;
+    process.env.ANTHROPIC_API_KEY = ANTHROPIC_DUMMY;
+    const seen: any[] = [];
+    const io: LLMIO = {
+      generateObject: async <T>(options: any) => {
+        seen.push(options.model);
+        if (String(options.model.provider).startsWith("openai")) {
+          throw new Error("primary down");
+        }
+        return { object: { test: "ok" } as T };
+      },
+    };
+    const config = createTestConfig({
+      provider: "openai",
+      model: "grok-4.7",
+      apiKeyEnv: "XAI_API_KEY",
+    });
+    await llmWithFallback(schema, "prompt", config, io);
+    expect(seen).toHaveLength(2);
+    expect(sentHeaders(seen[0]).Authorization).toBe(`Bearer ${XAI_DUMMY}`);
+    const fallbackHeaders = sentHeaders(seen[1]);
+    expect(String(seen[1].provider)).toStartWith("anthropic");
+    expect(fallbackHeaders["x-api-key"]).toBe(ANTHROPIC_DUMMY);
+    expect(JSON.stringify(fallbackHeaders)).not.toContain(XAI_DUMMY);
   });
 });
 

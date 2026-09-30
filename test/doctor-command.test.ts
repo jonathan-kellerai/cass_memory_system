@@ -472,6 +472,54 @@ describe("doctorCommand", () => {
         },
       );
     });
+
+    // apiKeyEnv: the named var decides readiness; OPENAI_API_KEY neither makes
+    // the provider "ready" nor triggers a promised auto-fallback.
+    for (const [label, xai, status, fragment] of [
+      ["ready when the apiKeyEnv var is set", "dummy-xai-AAAA", "pass", "Provider: openai (ready)"],
+      [
+        "warns when the apiKeyEnv var is unset",
+        undefined,
+        "warn",
+        "XAI_API_KEY (config apiKeyEnv) is not set",
+      ],
+    ] as const) {
+      test(`apiKeyEnv: ${label}`, async () => {
+        await withEnvAsync(
+          {
+            XAI_API_KEY: xai,
+            OPENAI_API_KEY: "dummy-openai-BBBB",
+            ANTHROPIC_API_KEY: undefined,
+            GOOGLE_GENERATIVE_AI_API_KEY: undefined,
+          },
+          async () => {
+            await withTempCassHome(async (env) => {
+              await withCwd(env.home, async () => {
+                await writeFile(
+                  env.configPath,
+                  JSON.stringify(
+                    { cassPath: "cass", provider: "openai", apiKeyEnv: "XAI_API_KEY" },
+                    null,
+                    2,
+                  ),
+                );
+                await writeFile(env.playbookPath, createValidPlaybookYaml());
+
+                process.exitCode = 0;
+                const { output } = await captureConsoleLog(() => doctorCommand({ json: true }));
+
+                const llmCheck = JSON.parse(output).data.checks.find(
+                  (c: any) => c.category === "LLM Configuration",
+                );
+                expect(llmCheck.status).toBe(status);
+                expect(llmCheck.message).toContain(fragment);
+                expect(llmCheck.message).not.toContain("auto-fallback");
+              });
+            });
+          },
+        );
+      });
+    }
   });
 
   describe("playbook schema version checks", () => {

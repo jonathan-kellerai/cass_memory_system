@@ -43,6 +43,9 @@ const MODEL_COSTS: Record<string, { input: number; output: number }> = {
   "gpt-4o-mini": { input: 0.15, output: 0.6 },
   "gpt-4-turbo": { input: 10.0, output: 30.0 },
 
+  // xAI
+  "grok-4.7": { input: 2.0, output: 6.0 },
+
   // Google
   "gemini-1.5-pro": { input: 3.5, output: 10.5 },
   "gemini-1.5-flash": { input: 0.075, output: 0.3 },

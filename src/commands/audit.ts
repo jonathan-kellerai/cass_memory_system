@@ -2,7 +2,7 @@ import chalk from "chalk";
 import { scanSessionsForViolations } from "../audit.js";
 import { type CassRunner, cassTimeline } from "../cass.js";
 import { loadConfig } from "../config.js";
-import { getAvailableProviders, type LLMIO } from "../llm.js";
+import { getAvailableProviders, hasConfiguredApiKey, type LLMIO } from "../llm.js";
 import { iconPrefix } from "../output.js";
 import { getActiveBullets, loadMergedPlaybook } from "../playbook.js";
 import { scanForTraumas } from "../trauma.js";
@@ -75,7 +75,7 @@ export async function auditCommand(
     }
 
     const cassRunner = deps.cassRunner;
-    const hasApiKeyOverride = typeof config.apiKey === "string" && config.apiKey.trim() !== "";
+    const hasApiKeyOverride = hasConfiguredApiKey(config);
     const availableProviders = getAvailableProviders();
     if (!hasApiKeyOverride && availableProviders.length === 0) {
       const message =

@@ -5,7 +5,7 @@
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAI, type OpenAIProvider } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
 import { createOllama } from "ollama-ai-provider";
 import { z } from "zod";
@@ -52,6 +52,8 @@ export interface LLMConfig {
   ollamaBaseUrl?: string;
   /** #47 escape hatch: disable strict structured outputs for openai-compatible gateways. */
   disableStructuredOutputs?: boolean;
+  /** openai provider only: sent as `reasoning_effort`; omitted when unset. */
+  reasoningEffort?: Config["reasoningEffort"];
 }
 
 /**
@@ -112,6 +114,45 @@ export function getApiKey(provider: string): string {
   return apiKey.trim();
 }
 
+/**
+ * Resolve the key for the *configured* provider from config: `apiKey` first,
+ * then the env var named by `apiKeyEnv`. Returns undefined when neither is
+ * set, leaving the provider default (getApiKey) in charge.
+ *
+ * With `apiKeyEnv` set, a missing or empty var throws instead of returning
+ * undefined: falling through to the provider default would send e.g. the real
+ * OPENAI_API_KEY to whatever `baseUrl` points at.
+ *
+ * The result is used only for the configured provider; fallback providers
+ * resolve their own default env vars.
+ */
+export function resolveConfiguredApiKey(
+  config: Pick<Config, "apiKey" | "apiKeyEnv">,
+): string | undefined {
+  if (typeof config.apiKey === "string" && config.apiKey.trim() !== "") {
+    return config.apiKey.trim();
+  }
+  const envVar = config.apiKeyEnv?.trim();
+  if (!envVar) return undefined;
+  const value = process.env[envVar];
+  if (!value || value.trim() === "") {
+    throw new Error(
+      `${envVar} environment variable not found (named by config apiKeyEnv). ` +
+        `Set it with: export ${envVar}=<your-key>`,
+    );
+  }
+  return value.trim();
+}
+
+/** Non-throwing check: does config itself supply a key (apiKey or a set apiKeyEnv var)? */
+export function hasConfiguredApiKey(config: Pick<Config, "apiKey" | "apiKeyEnv">): boolean {
+  try {
+    return resolveConfiguredApiKey(config) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export function validateApiKey(provider: string): void {
   const normalized = provider.trim().toLowerCase() as LLMProvider;
 
@@ -170,6 +211,7 @@ export function getModel(config: {
   baseUrl?: string;
   ollamaBaseUrl?: string;
   disableStructuredOutputs?: boolean;
+  reasoningEffort?: Config["reasoningEffort"];
 }): LanguageModel {
   const provider = config.provider as LLMProvider;
 
@@ -225,9 +267,18 @@ export function getModel(config: {
         apiKey,
         ...(baseURL ? { baseURL } : {}),
       });
-      return config.disableStructuredOutputs
-        ? openaiProvider(config.model, { structuredOutputs: false })
-        : openaiProvider(config.model);
+      //
+      // `reasoningEffort` is likewise a model setting, sent as
+      // `reasoning_effort` and omitted entirely when unset. The SDK types it as
+      // 'low' | 'medium' | 'high', but passes the string through unchanged at
+      // runtime, so "xhigh" needs only the cast below.
+      const settings: NonNullable<Parameters<OpenAIProvider["chat"]>[1]> = {
+        ...(config.disableStructuredOutputs ? { structuredOutputs: false } : {}),
+        ...(config.reasoningEffort
+          ? { reasoningEffort: config.reasoningEffort as "low" | "medium" | "high" }
+          : {}),
+      };
+      return openaiProvider(config.model, settings);
     }
     case "anthropic":
       return createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) })(config.model);
@@ -949,11 +1000,12 @@ export function __resetAutoFallbackNoticeForTest(): void {
  */
 export function resolveEffectiveLLMConfig(config: Config): Config {
   const provider = config.provider as LLMProvider;
-  // An explicit apiKey override always makes the configured provider usable.
-  // Ollama (localhost default) and Bedrock (AWS credential chain / IAM roles)
-  // use implicit auth we can't reliably detect via env vars — respect the
-  // user's explicit choice, mirroring llmWithFallback()/doctor.
-  const hasApiKeyOverride = typeof config.apiKey === "string" && config.apiKey.trim() !== "";
+  // An explicit apiKey (or apiKeyEnv) override always makes the configured
+  // provider usable; an apiKeyEnv naming an empty var throws here rather than
+  // rerouting. Ollama (localhost default) and Bedrock (AWS credential chain /
+  // IAM roles) use implicit auth we can't reliably detect via env vars —
+  // respect the user's explicit choice, mirroring llmWithFallback()/doctor.
+  const hasApiKeyOverride = resolveConfiguredApiKey(config) !== undefined;
   const usesImplicitAuth = provider === "ollama" || provider === "bedrock";
   if (hasApiKeyOverride || usesImplicitAuth || isLLMAvailable(provider)) return config;
 
@@ -969,7 +1021,16 @@ export function resolveEffectiveLLMConfig(config: Config): Config {
         `[LLM] Provider '${provider}' is not configured — auto-falling back to ${target}. Configure ${envVar} to use '${provider}' directly.`,
       );
     }
-    return { ...config, provider: fallback, model: FALLBACK_MODELS[fallback] };
+    // reasoningEffort was tuned for the configured model, not the fallback one;
+    // apiKeyEnv names the configured provider's key, which the fallback must
+    // not receive.
+    return {
+      ...config,
+      provider: fallback,
+      model: FALLBACK_MODELS[fallback],
+      reasoningEffort: undefined,
+      apiKeyEnv: undefined,
+    };
   }
   // Nothing usable — return unchanged and let the normal error surface.
   return config;
@@ -1022,13 +1083,17 @@ export async function generateObjectSafe<T>(
     const llmConfig: LLMConfig = {
       provider: config.provider as LLMProvider,
       model: config.model,
-      apiKey: config.apiKey,
+      // config.apiKey, else the var named by config.apiKeyEnv. A reroute by
+      // resolveEffectiveLLMConfig() clears apiKeyEnv, so a fallback provider
+      // reads its own default var.
+      apiKey: resolveConfiguredApiKey(config),
       baseUrl: config.baseUrl,
       ollamaBaseUrl: config.ollamaBaseUrl,
       // Without this the #47 escape hatch was silently dropped here and
       // strict json_schema / forced tool_choice still reached gateways that
       // reject them (see PR #59).
       disableStructuredOutputs: config.disableStructuredOutputs,
+      reasoningEffort: config.reasoningEffort,
     };
     model = getModel(llmConfig);
   }
@@ -1454,10 +1519,10 @@ export async function llmWithFallback<T>(
   const primaryProvider = config.provider as LLMProvider;
   const primaryModel = config.model;
 
-  const apiKeyOverride =
-    typeof config.apiKey === "string" && config.apiKey.trim() !== ""
-      ? config.apiKey.trim()
-      : undefined;
+  // config.apiKey, else the var named by config.apiKeyEnv (throws if that var
+  // is empty). Used for the primary provider only; fallback hops below get no
+  // apiKey and read their own default env var.
+  const apiKeyOverride = resolveConfiguredApiKey(config);
 
   const availableProviders = getAvailableProviders();
   const providerOrder: Array<{ provider: LLMProvider; model: string; apiKey?: string }> = [];
@@ -1514,6 +1579,8 @@ export async function llmWithFallback<T>(
         baseUrl: config.baseUrl,
         ollamaBaseUrl: config.ollamaBaseUrl,
         disableStructuredOutputs: config.disableStructuredOutputs,
+        // Tuned for the configured model; a fallback hop runs a different model.
+        reasoningEffort: provider === primaryProvider ? config.reasoningEffort : undefined,
       });
       const costConfig: Config = { ...config, provider, model, apiKey };
 

@@ -7,6 +7,7 @@ import { cassAvailable, cassNeedsIndex, cassSearch, cassStats, safeCassSearch } 
 import { DEFAULT_CONFIG, loadConfig, patchGlobalConfig } from "../config.js";
 import {
   getAvailableProviders,
+  hasConfiguredApiKey,
   isLLMAvailable,
   resolveCliCommand,
   resolveOllamaBaseUrl,
@@ -517,14 +518,20 @@ async function computeDoctorChecks(
   // standard env vars — Ollama defaults to localhost, Bedrock uses IAM roles.
   const usesImplicitAuth =
     config.provider === "ollama" || config.provider === "bedrock" || config.provider === "cli";
-  const hasAnyApiKey = availableProviders.length > 0 || !!config.apiKey || usesImplicitAuth;
+  // config.apiKey, or the var named by config.apiKeyEnv.
+  const hasConfigKey = hasConfiguredApiKey(config);
+  const hasAnyApiKey = availableProviders.length > 0 || hasConfigKey || usesImplicitAuth;
   const configuredProviderAvailable =
-    isLLMAvailable(config.provider) || !!config.apiKey || usesImplicitAuth;
+    isLLMAvailable(config.provider) || hasConfigKey || usesImplicitAuth;
 
   let llmMessage: string;
   let llmStatus: CheckStatus = "warn";
 
-  if (hasAnyApiKey) {
+  if (config.apiKeyEnv && !hasConfigKey) {
+    // LLM calls error out here instead of using the provider default var or
+    // auto-falling back, so neither "ready" nor "will auto-fallback" is true.
+    llmMessage = `Provider: ${config.provider} key not found — ${config.apiKeyEnv} (config apiKeyEnv) is not set; LLM calls will fail until it is`;
+  } else if (hasAnyApiKey) {
     llmStatus = "pass";
     if (configuredProviderAvailable) {
       if (config.provider === "ollama") {
@@ -1034,7 +1041,7 @@ export async function runSelfTest(
   const availableProviders = getAvailableProviders();
   const currentProvider = config.provider;
   const hasCurrentProvider = availableProviders.includes(currentProvider);
-  const hasConfigApiKey = !!config.apiKey;
+  const hasConfigApiKey = hasConfiguredApiKey(config);
   const providerUsesImplicitAuth =
     currentProvider === "ollama" || currentProvider === "bedrock" || currentProvider === "cli";
   const hasAnyApiKey = availableProviders.length > 0 || hasConfigApiKey || providerUsesImplicitAuth;
